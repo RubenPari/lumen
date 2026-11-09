@@ -22,6 +22,12 @@ type Options struct {
 	MaxHeight   int     // 0 = original
 	MaxBitrate  int     // kbps, 0 = unlimited
 	ForceVideo  bool    // force video re-encode
+	// SegmentLength in seconds (default 4) and StartNumber of the first segment.
+	SegmentLength int
+	StartNumber   int
+	// VOD keeps output timestamps aligned with the source (used for
+	// pre-computed VOD playlists served to Jellyfin clients).
+	VOD bool
 	// BurnSubtitle is the absolute index of an image subtitle stream (PGS,
 	// VobSub) to burn into the video; -1 disables it.
 	BurnSubtitle int
@@ -29,15 +35,16 @@ type Options struct {
 
 // Session is a running ffmpeg HLS job.
 type Session struct {
-	ID       string
-	ItemID   string
-	Dir      string
-	Start    float64
-	cmd      *exec.Cmd
-	cancel   context.CancelFunc
-	lastSeen time.Time
-	done     chan struct{}
-	err      error
+	ID          string
+	ItemID      string
+	Dir         string
+	Start       float64
+	StartNumber int
+	cmd         *exec.Cmd
+	cancel      context.CancelFunc
+	lastSeen    time.Time
+	done        chan struct{}
+	err         error
 }
 
 // Manager keeps track of transcoding sessions.
@@ -96,6 +103,19 @@ func (m *Manager) Count() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.sessions)
+}
+
+// Find returns the running session of an owner for an item, if any.
+func (m *Manager) Find(owner, itemID string) *Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, s := range m.sessions {
+		if s.ItemID == itemID && strings.HasPrefix(id, owner) {
+			s.lastSeen = time.Now()
+			return s
+		}
+	}
+	return nil
 }
 
 // Get returns a session and refreshes its idle timer.
@@ -159,6 +179,13 @@ func (m *Manager) Start(it *db.Item, opt Options, owner string) (*Session, error
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
 	if opt.Start > 0 {
 		args = append(args, "-ss", strconv.FormatFloat(opt.Start, 'f', 3, 64))
+	}
+	segLen := opt.SegmentLength
+	if segLen <= 0 {
+		segLen = 4
+	}
+	if opt.VOD {
+		opt.ForceVideo = true // segment boundaries must match the playlist
 	}
 	burn := opt.BurnSubtitle >= 0 && video != nil
 	hw := m.HWAccel
@@ -229,23 +256,26 @@ func (m *Manager) Start(it *db.Item, opt Options, owner string) (*Session, error
 		if opt.MaxBitrate > 0 {
 			args = append(args, "-maxrate", fmt.Sprintf("%dk", opt.MaxBitrate), "-bufsize", fmt.Sprintf("%dk", opt.MaxBitrate*2))
 		}
-		args = append(args, "-force_key_frames", "expr:gte(t,n_forced*4)")
+		args = append(args, "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segLen))
 	}
 	if audio != nil && browserAudioOK(*audio) && opt.MaxBitrate == 0 {
 		args = append(args, "-c:a", "copy")
 	} else {
 		args = append(args, "-c:a", "aac", "-ac", "2", "-b:a", "192k")
 	}
+	if opt.VOD && opt.Start > 0 {
+		args = append(args, "-output_ts_offset", strconv.FormatFloat(opt.Start, 'f', 3, 64))
+	}
 	args = append(args, "-sn", "-dn", "-max_muxing_queue_size", "2048",
-		"-f", "hls", "-hls_time", "4", "-hls_list_size", "0", "-hls_playlist_type", "event",
-		"-hls_flags", "independent_segments+temp_file", "-start_number", "0",
+		"-f", "hls", "-hls_time", strconv.Itoa(segLen), "-hls_list_size", "0", "-hls_playlist_type", "event",
+		"-hls_flags", "independent_segments+temp_file", "-start_number", strconv.Itoa(opt.StartNumber),
 		"-hls_segment_filename", filepath.Join(dir, "seg%05d.ts"), filepath.Join(dir, "index.m3u8"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, m.FFmpeg, args...)
 	logf, _ := os.Create(filepath.Join(dir, "ffmpeg.log"))
 	cmd.Stderr = logf
-	s := &Session{ID: id, ItemID: it.ID, Dir: dir, Start: opt.Start, cmd: cmd, cancel: cancel, lastSeen: time.Now(), done: make(chan struct{})}
+	s := &Session{ID: id, ItemID: it.ID, Dir: dir, Start: opt.Start, StartNumber: opt.StartNumber, cmd: cmd, cancel: cancel, lastSeen: time.Now(), done: make(chan struct{})}
 	m.Log.Info("transcode start", "item", it.Name, "start", opt.Start, "copyVideo", copyVideo, "args", strings.Join(args, " "))
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -290,6 +320,35 @@ func (s *Session) WaitPlaylist(ctx context.Context) error {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
+}
+
+// Done reports whether ffmpeg has exited.
+func (s *Session) Done() bool {
+	select {
+	case <-s.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// HasSegment reports whether a segment file has been written.
+func (s *Session) HasSegment(name string) bool {
+	_, err := os.Stat(filepath.Join(s.Dir, filepath.Base(name)))
+	return err == nil
+}
+
+// LatestSegment returns the highest segment number written so far (-1 if none).
+func (s *Session) LatestSegment() int {
+	entries, _ := os.ReadDir(s.Dir)
+	best := -1
+	for _, e := range entries {
+		var n int
+		if _, err := fmt.Sscanf(e.Name(), "seg%05d.ts", &n); err == nil && strings.HasSuffix(e.Name(), ".ts") && n > best {
+			best = n
+		}
+	}
+	return best
 }
 
 // WaitSegment waits for a segment file to be fully written.

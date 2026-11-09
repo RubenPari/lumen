@@ -173,6 +173,14 @@ var migrations = []string{
 	CREATE INDEX IF NOT EXISTS idx_items_artist ON items(artist_id);
 	ALTER TABLE user_data ADD COLUMN progress_text TEXT NOT NULL DEFAULT '';
 	ALTER TABLE libraries ADD COLUMN realtime INTEGER NOT NULL DEFAULT 1;`,
+	// 2: client information for Jellyfin-compatible sessions.
+	`ALTER TABLE sessions ADD COLUMN client TEXT NOT NULL DEFAULT '';
+	ALTER TABLE sessions ADD COLUMN device_id TEXT NOT NULL DEFAULT '';
+	ALTER TABLE sessions ADD COLUMN app_version TEXT NOT NULL DEFAULT '';
+	CREATE TABLE IF NOT EXISTS display_prefs (
+		user_id TEXT NOT NULL, pref_id TEXT NOT NULL, client TEXT NOT NULL, data TEXT NOT NULL,
+		PRIMARY KEY (user_id, pref_id, client)
+	);`,
 }
 
 func migrate(d *sql.DB) error {

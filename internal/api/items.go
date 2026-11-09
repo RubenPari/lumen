@@ -400,12 +400,28 @@ func (s *Server) similar(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	items, err := s.similarItems(it)
+	if err != nil {
+		return err
+	}
+	d, err := s.dto(r, items)
+	if err != nil {
+		return err
+	}
+	if d == nil {
+		d = []*ItemDTO{}
+	}
+	return ok(w, d)
+}
+
+// similarItems ranks items of the same library by shared genres, people and year.
+func (s *Server) similarItems(it *db.Item) ([]*db.Item, error) {
 	if it.Type != db.TypeMovie && it.Type != db.TypeSeries {
-		return ok(w, []any{})
+		return nil, nil
 	}
 	cands, err := s.DB.QueryItems(`WHERE library_id=? AND type=? AND id!=? AND extra_type=''`, it.LibraryID, it.Type, it.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	genres := map[string]bool{}
 	for _, g := range it.Genres {
@@ -452,14 +468,7 @@ func (s *Server) similar(w http.ResponseWriter, r *http.Request) error {
 	for i := 0; i < len(sc) && i < 16; i++ {
 		items = append(items, sc[i].it)
 	}
-	d, err := s.dto(r, items)
-	if err != nil {
-		return err
-	}
-	if d == nil {
-		d = []*ItemDTO{}
-	}
-	return ok(w, d)
+	return items, nil
 }
 
 // orderedEpisodes returns all episodes of a series in watch order (specials last).

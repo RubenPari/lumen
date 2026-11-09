@@ -208,8 +208,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown endpoint"})
 	})
-	mux.HandleFunc("/", s.serveWeb)
-	return s.logRequests(mux)
+	mux.HandleFunc("/", s.withJellyfin(s.serveWeb))
+	return jfCORS(s.logRequests(mux))
 }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
@@ -231,6 +231,11 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := fs.Stat(s.Web, "index.html"); err != nil {
 		http.Error(w, "web client not built: run `make build` (or `cd web && npm ci && npm run build`) and rebuild the server", http.StatusNotFound)
+		return
+	}
+	// Jellyfin apps that wrap the server web client open /web/: serve Lumen's UI.
+	if lp := strings.ToLower(r.URL.Path); lp == "/web" || strings.HasPrefix(lp, "/web/") {
+		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 	p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")

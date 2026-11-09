@@ -232,7 +232,9 @@ func (ls *libScan) buildAlbum(dir, root string, tracks []trackScan) {
 	ls.progress(fmt.Sprintf("%s — %s", artist.Name, album.Name))
 }
 
-func naturalLessPath(a, b string) bool { return metadata.NaturalLess(filepath.Base(a), filepath.Base(b)) }
+func naturalLessPath(a, b string) bool {
+	return metadata.NaturalLess(filepath.Base(a), filepath.Base(b))
+}
 
 // pruneArtists removes artists without albums (artists are not tied to a single folder).
 func (s *Scanner) pruneArtists(libID string) {

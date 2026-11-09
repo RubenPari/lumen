@@ -20,62 +20,81 @@ func (s *Server) setPlayed(played bool) handler {
 		if err != nil {
 			return err
 		}
-		targets := []*db.Item{it}
-		switch it.Type {
-		case db.TypeSeries:
-			targets, err = s.DB.QueryItems(`WHERE series_id=? AND type='Episode'`, it.ID)
-		case db.TypeSeason:
-			targets, err = s.DB.QueryItems(`WHERE season_id=? AND type='Episode'`, it.ID)
-		}
-		if err != nil {
+		if _, err := s.applyPlayed(u, it, played); err != nil {
 			return err
 		}
-		ids := make([]string, len(targets))
-		for i, t := range targets {
-			ids[i] = t.ID
-		}
-		uds, err := s.DB.GetUserData(u.ID, ids)
-		if err != nil {
-			return err
-		}
-		now := db.Now()
-		for i, t := range targets {
-			d := uds[t.ID]
-			d.Played = played
-			d.Position = 0
-			if played {
-				d.PlayCount++
-				// Keep relative order so "next up" works after marking a season.
-				d.LastPlayed = now - int64(len(targets)-i)
-			}
-			if err := s.DB.SaveUserData(u.ID, t.ID, d); err != nil {
-				return err
-			}
-		}
-		s.Events.Publish(events.Event{Type: "userdata.changed", User: u.ID, Data: it.ID})
 		return ok2(s, w, r, it)
 	}
+}
+
+// applyPlayed marks an item (or all episodes of a series/season) as played.
+func (s *Server) applyPlayed(u *db.User, it *db.Item, played bool) (db.UserData, error) {
+	targets := []*db.Item{it}
+	var err error
+	switch it.Type {
+	case db.TypeSeries:
+		targets, err = s.DB.QueryItems(`WHERE series_id=? AND type='Episode'`, it.ID)
+	case db.TypeSeason:
+		targets, err = s.DB.QueryItems(`WHERE season_id=? AND type='Episode'`, it.ID)
+	case db.TypeMusicAlbum:
+		targets, err = s.DB.QueryItems(`WHERE album_id=? AND type='Audio'`, it.ID)
+		targets = append(targets, it)
+	}
+	if err != nil {
+		return db.UserData{}, err
+	}
+	ids := make([]string, len(targets))
+	for i, t := range targets {
+		ids[i] = t.ID
+	}
+	uds, err := s.DB.GetUserData(u.ID, ids)
+	if err != nil {
+		return db.UserData{}, err
+	}
+	now := db.Now()
+	var last db.UserData
+	for i, t := range targets {
+		d := uds[t.ID]
+		d.Played = played
+		d.Position = 0
+		if played {
+			d.PlayCount++
+			// Keep relative order so "next up" works after marking a season.
+			d.LastPlayed = now - int64(len(targets)-i)
+		}
+		if err := s.DB.SaveUserData(u.ID, t.ID, d); err != nil {
+			return db.UserData{}, err
+		}
+		if t.ID == it.ID {
+			last = d
+		}
+	}
+	s.Events.Publish(events.Event{Type: "userdata.changed", User: u.ID, Data: it.ID})
+	return last, nil
 }
 
 func (s *Server) setFavorite(fav bool) handler {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		u := userFrom(r)
-		id := r.PathValue("id")
-		it, err := s.DB.GetItem(id)
+		it, err := s.DB.GetItem(r.PathValue("id"))
 		if err != nil {
 			return err
 		}
-		uds, err := s.DB.GetUserData(u.ID, []string{id})
-		if err != nil {
-			return err
-		}
-		d := uds[id]
-		d.Favorite = fav
-		if err := s.DB.SaveUserData(u.ID, id, d); err != nil {
+		if _, err := s.applyFavorite(u, it.ID, fav); err != nil {
 			return err
 		}
 		return ok2(s, w, r, it)
 	}
+}
+
+func (s *Server) applyFavorite(u *db.User, id string, fav bool) (db.UserData, error) {
+	uds, err := s.DB.GetUserData(u.ID, []string{id})
+	if err != nil {
+		return db.UserData{}, err
+	}
+	d := uds[id]
+	d.Favorite = fav
+	return d, s.DB.SaveUserData(u.ID, id, d)
 }
 
 func (s *Server) progress(w http.ResponseWriter, r *http.Request) error {
@@ -89,47 +108,56 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) error {
 	if err := decode(r, &body); err != nil {
 		return err
 	}
-	u := userFrom(r)
 	it, err := s.DB.GetItem(r.PathValue("id"))
 	if err != nil {
 		return err
 	}
+	d, err := s.recordProgress(userFrom(r), it, body.Position, body.Duration, body.Paused, body.Event, body.Method, deviceName(r.UserAgent()))
+	if err != nil {
+		return err
+	}
+	return ok(w, d)
+}
+
+// recordProgress stores a playback position and updates "now playing"
+// (Jellyfin's resume rules: <5% resets, >90% marks as played).
+func (s *Server) recordProgress(u *db.User, it *db.Item, position, clientDuration float64, paused bool, event, method, device string) (db.UserData, error) {
 	dur := it.Duration
-	if dur == 0 && body.Duration > 0 {
-		dur = body.Duration
+	if dur == 0 && clientDuration > 0 {
+		dur = clientDuration
 		_, _ = s.DB.Exec(`UPDATE items SET duration=? WHERE id=?`, dur, it.ID)
 	}
 	uds, err := s.DB.GetUserData(u.ID, []string{it.ID})
 	if err != nil {
-		return err
+		return db.UserData{}, err
 	}
 	d := uds[it.ID]
 	d.LastPlayed = db.Now()
 	pct := 0.0
 	if dur > 0 {
-		pct = body.Position / dur
+		pct = position / dur
 	}
 	switch {
-	case pct >= 0.9 || (dur > 0 && dur-body.Position < 30 && dur > 300 && it.Type == db.TypeEpisode):
+	case pct >= 0.9 || (dur > 0 && dur-position < 30 && dur > 300 && it.Type == db.TypeEpisode):
 		if !d.Played || d.Position > 0 {
 			d.PlayCount++
 		}
 		d.Played, d.Position = true, 0
-	case pct < 0.05 && body.Position < 60:
+	case pct < 0.05 && position < 60:
 		d.Position = 0
 	default:
-		d.Position = body.Position
+		d.Position = position
 		d.Played = false
 	}
 	if err := s.DB.SaveUserData(u.ID, it.ID, d); err != nil {
-		return err
+		return db.UserData{}, err
 	}
-	if body.Event == "stop" {
+	if event == "stop" {
 		s.playing.Delete(u.ID)
 		s.Events.Publish(events.Event{Type: "userdata.changed", User: u.ID, Data: it.ID})
 	} else {
-		np := &NowPlaying{UserID: u.ID, UserName: u.Name, ItemID: it.ID, ItemName: it.Name, Position: body.Position,
-			Duration: dur, Paused: body.Paused, Method: body.Method, Device: deviceName(r.UserAgent()), UpdatedAt: db.Now()}
+		np := &NowPlaying{UserID: u.ID, UserName: u.Name, ItemID: it.ID, ItemName: it.Name, Position: position,
+			Duration: dur, Paused: paused, Method: method, Device: device, UpdatedAt: db.Now()}
 		if it.SeriesID != "" {
 			if sr, err := s.DB.GetItem(it.SeriesID); err == nil {
 				np.Series = sr.Name
@@ -137,7 +165,7 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) error {
 		}
 		s.playing.Store(u.ID, np)
 	}
-	return ok(w, d)
+	return d, nil
 }
 
 func deviceName(ua string) string {

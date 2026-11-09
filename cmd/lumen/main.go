@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -131,6 +132,10 @@ func main() {
 			}
 		}
 	}()
+
+	if _, port, err := net.SplitHostPort(*addr); err == nil && os.Getenv("LUMEN_NO_DISCOVERY") == "" {
+		go srv.ServeDiscovery(ctx, port)
+	}
 
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {

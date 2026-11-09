@@ -66,6 +66,19 @@ Senza ffmpeg/ffprobe funziona solo la riproduzione diretta dei formati che il br
 - **Dashboard admin**: statistiche, chi sta guardando cosa (direct/transcode), stato scansione,
   gestione librerie con selettore di cartelle, utenti, impostazioni.
 
+## App Jellyfin
+
+Lumen espone anche un sottoinsieme dell'API di Jellyfin (versione dichiarata 10.11), quindi puoi usare le app
+esistenti puntandole a `http://<ip-del-server>:8096`: Jellyfin per Android TV, Findroid, Swiftfin, Infuse,
+Streamyfin, Finamp (musica). Il server viene trovato anche in automatico (discovery UDP 7359).
+
+Supportati: login, librerie, navigazione, ricerca, immagini, "Continua a guardare"/"Prossimi episodi",
+PlaybackInfo con negoziazione dal DeviceProfile del client, riproduzione diretta, transcodifica HLS con
+playlist VOD e salto in qualunque punto, sottotitoli esterni/incorporati, posizione e stato visto/preferito,
+keep-alive WebSocket. Non supportati: SyncPlay, controllo remoto, QuickConnect, plugin, gestione del server
+dalle app. Le app che incapsulano la web app di Jellyfin (Android "mobile", Jellyfin Media Player) mostrano
+la web app di Lumen.
+
 ## UI/UX
 
 - Home con hero cinematografico a rotazione (sfondo con effetto Ken Burns, logo del titolo, "Riprendi").
@@ -90,7 +103,7 @@ Senza ffmpeg/ffprobe funziona solo la riproduzione diretta dei formati che il br
 | `internal/metadata/tmdb.go`| `MediaBrowser.Providers/Plugins/Tmdb`                             |
 | `internal/metadata/probe.go` | `MediaBrowser.MediaEncoding/Probing`                           |
 | `internal/stream`          | `MediaBrowser.MediaEncoding`, `Jellyfin.Api` (DynamicHls, Subtitles) |
-| `internal/api`             | `Jellyfin.Api` (API JSON propria, più semplice)                   |
+| `internal/api`             | `Jellyfin.Api` (API JSON propria + `jf_*.go`: sottoinsieme compatibile con Jellyfin) |
 | `internal/db`              | `Jellyfin.Database` (SQLite, schema compatto)                     |
 | `web/`                     | `jellyfin-web` (riscritto da zero)                                |
 
@@ -104,7 +117,8 @@ make test                                         # go vet + test + typecheck
 
 ## Limiti attuali
 
-- L'API non è compatibile con i client Jellyfin ufficiali (app TV/mobile): c'è solo la web app.
+- Compatibilità Jellyfin parziale (vedi sopra); testata con le sequenze di chiamate dei client, non ancora
+  su ogni app reale.
 - Niente Live TV (in arrivo).
 - I formati `.mobi`/`.azw3`/`.fb2` sono catalogati ma solo scaricabili, non leggibili nel browser; le foto HEIC
   si vedono solo nei browser che le supportano.
