@@ -1,13 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import Hls from "hls.js";
+import type Hls from "hls.js";
 import { ArrowLeft, ChevronDown, ChevronUp, List, Maximize, Minimize, Pause, Play, Radio, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button, Spinner } from "../components/ui";
 import { api } from "../lib/api";
+import { bindHls } from "../lib/hls";
 import { getPrefs, setPrefs, useLatest } from "../lib/hooks";
 import { t } from "../lib/i18n";
+import { useFullscreenFlag, useHideControls } from "../lib/playerChrome";
 import { ChannelLogo, hhmm, useNow, type LiveChannel } from "./LiveTV";
 
 export function LivePlayer() {
@@ -24,16 +26,9 @@ export function LivePlayer() {
   const [loading, setLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(getPrefs().muted);
-  const [controls, setControls] = useState(true);
   const [list, setList] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
-  const hide = useRef<number | undefined>(undefined);
-
-  const poke = useCallback(() => {
-    setControls(true);
-    window.clearTimeout(hide.current);
-    hide.current = window.setTimeout(() => setControls(false), 3500);
-  }, []);
+  const fullscreen = useFullscreenFlag();
+  const { visible: controls, poke } = useHideControls(3500);
 
   useEffect(() => {
     if (!id) return;
@@ -47,18 +42,7 @@ export function LivePlayer() {
         const r = await api.post<{ url: string }>(`/api/livetv/channels/${id}/hls`);
         if (cancelled) return;
         const v = videoRef.current!;
-        if (Hls.isSupported()) {
-          const hls = new Hls({ liveSyncDurationCount: 3, enableWorker: true, lowLatencyMode: false });
-          hls.loadSource(r.url);
-          hls.attachMedia(v);
-          hls.on(Hls.Events.ERROR, (_, d) => {
-            if (!d.fatal) return;
-            if (d.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-            else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-            else setError(d.details);
-          });
-          hlsRef.current = hls;
-        } else v.src = r.url;
+        hlsRef.current = bindHls(v, r.url, { liveSyncDurationCount: 3 }, (details) => setError(details));
         v.play().catch(() => setPlaying(false));
       } catch (e) {
         if (!cancelled) {
@@ -78,11 +62,6 @@ export function LivePlayer() {
     if (videoRef.current) videoRef.current.muted = muted;
     setPrefs({ muted });
   }, [muted]);
-  useEffect(() => {
-    const on = () => setFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", on);
-    return () => document.removeEventListener("fullscreenchange", on);
-  }, []);
 
   const zap = useCallback(
     (d: number) => {

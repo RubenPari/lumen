@@ -1,11 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import Hls from "hls.js";
+import type Hls from "hls.js";
 import {
   ArrowLeft,
   Captions,
-  Check,
-  ChevronRight,
   Gauge,
   Maximize,
   Minimize,
@@ -23,12 +21,16 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Img } from "../components/cards";
+import { CtrlButton, MenuItem, MenuNav, MenuPanel } from "../components/player/menus";
 import { Button, Spinner } from "../components/ui";
 import { api, landscapeImage, type Item, type PlaybackInfo } from "../lib/api";
 import { episodeLabel, formatClock } from "../lib/format";
+import { bindHls } from "../lib/hls";
 import { getPrefs, useLatest, usePrefs } from "../lib/hooks";
 import { t } from "../lib/i18n";
 import { canDirectPlay, qualities, type QualityId } from "../lib/playback";
+import { useFullscreenFlag, useHideControls } from "../lib/playerChrome";
+import { useProgressReporter } from "../lib/progress";
 import { activeCues, parseVTT, type Cue } from "../lib/vtt";
 
 type Mode = "direct" | "hls";
@@ -74,8 +76,7 @@ export function Player() {
   const [mediaDuration, setMediaDuration] = useState(0);
   const [volume, setVolume] = useState(prefs.volume);
   const [muted, setMuted] = useState(prefs.muted);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [controls, setControls] = useState(true);
+  const fullscreen = useFullscreenFlag();
   const [menu, setMenu] = useState<Menu>(null);
   const [error, setError] = useState<string | null>(null);
   const [subIndex, setSubIndex] = useState(-1);
@@ -88,8 +89,10 @@ export function Player() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [hover, setHover] = useState<{ x: number; t: number } | null>(null);
   const [dismissedUpNext, setDismissedUpNext] = useState(false);
-  const hideTimer = useRef<number | undefined>(undefined);
-  const lastReport = useRef(0);
+  const { visible: controls, poke, show: showControls } = useHideControls(3200, {
+    canHide: () => !videoRef.current?.paused,
+    onHide: () => setMenu(null),
+  });
 
   const item = info?.item;
   const duration = info?.duration || item?.duration || mediaDuration || 0;
@@ -159,18 +162,8 @@ export function Player() {
     hlsRef.current?.destroy();
     hlsRef.current = null;
     const startRel = source.mode === "direct" ? (timeRef.current || initialStart) : 0;
-    if (source.mode === "hls" && Hls.isSupported()) {
-      const hls = new Hls({ startPosition: 0, maxBufferLength: 60, backBufferLength: 90, enableWorker: true, lowLatencyMode: false });
-      hls.loadSource(source.url);
-      hls.attachMedia(v);
-      hls.on(Hls.Events.ERROR, (_, d) => {
-        if (d.fatal) {
-          if (d.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-          else if (d.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-          else setError(d.details);
-        }
-      });
-      hlsRef.current = hls;
+    if (source.mode === "hls") {
+      hlsRef.current = bindHls(v, source.url, { startPosition: 0, maxBufferLength: 60, backBufferLength: 90 }, setError);
     } else {
       v.src = source.url;
     }
@@ -192,25 +185,7 @@ export function Player() {
     };
   }, [sourceRef]);
 
-  // ---- Progress reporting ----
-  const report = useCallback(
-    (event: "progress" | "stop" | "start", paused = false) => {
-      if (!item) return;
-      const body = JSON.stringify({ position: timeRef.current, duration, paused, event, method: sourceRef.current?.mode === "hls" ? "Transcode" : "DirectPlay" });
-      fetch(`/api/items/${item.id}/progress`, { method: "POST", body, headers: { "Content-Type": "application/json" }, keepalive: true }).catch(() => {});
-      lastReport.current = Date.now();
-    },
-    [item, duration, timeRef, sourceRef],
-  );
-  const reportRef = useLatest(report);
-  useEffect(() => {
-    const onHide = () => reportRef.current("stop");
-    window.addEventListener("pagehide", onHide);
-    return () => {
-      window.removeEventListener("pagehide", onHide);
-      if (timeRef.current > 0) reportRef.current("stop");
-    };
-  }, [reportRef, timeRef]);
+  const { report, lastReport } = useProgressReporter(item?.id, duration, timeRef, sourceRef);
 
   // ---- Subtitles ----
   useEffect(() => {
@@ -248,20 +223,8 @@ export function Player() {
     setWaiting(false);
   };
 
-  // ---- Controls visibility ----
-  const poke = useCallback(() => {
-    setControls(true);
-    window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => {
-      if (!videoRef.current?.paused) {
-        setControls(false);
-        setMenu(null);
-      }
-    }, 3200);
-  }, []);
   useEffect(() => {
     poke();
-    return () => window.clearTimeout(hideTimer.current);
   }, [poke]);
 
   // ---- Actions ----
@@ -309,11 +272,6 @@ export function Player() {
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) document.exitFullscreen();
     else wrapRef.current?.requestFullscreen?.().catch(() => {});
-  }, []);
-  useEffect(() => {
-    const on = () => setFullscreen(!!document.fullscreenElement);
-    document.addEventListener("fullscreenchange", on);
-    return () => document.removeEventListener("fullscreenchange", on);
   }, []);
 
   useEffect(() => {
@@ -487,7 +445,7 @@ export function Player() {
         }}
         onPause={() => {
           setPlaying(false);
-          setControls(true);
+          showControls();
         }}
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
@@ -773,61 +731,3 @@ export function Player() {
   );
 }
 
-function CtrlButton({ label, onClick, children, active }: { label: string; onClick: () => void; children: React.ReactNode; active?: boolean }) {
-  return (
-    <button
-      aria-label={label}
-      title={label}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      className={clsx("focus-ring relative grid h-11 w-11 place-items-center rounded-full transition hover:bg-white/15 active:scale-90", active && "text-accent-400")}
-    >
-      {children}
-      {active && <span className="absolute bottom-1.5 h-0.5 w-4 rounded-full bg-accent-400" />}
-    </button>
-  );
-}
-
-function MenuPanel({ title, children, onBack }: { title: string; children: React.ReactNode; onBack?: () => void }) {
-  return (
-    <div
-      className="absolute right-0 bottom-14 max-h-[60vh] w-72 animate-scale-in overflow-y-auto rounded-2xl bg-ink-900/95 p-1.5 shadow-2xl ring-1 ring-white/15 backdrop-blur-xl"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center gap-2 px-3 pt-2 pb-2 text-[12px] font-semibold tracking-wider text-ink-400 uppercase">
-        {onBack && (
-          <button onClick={onBack} className="-ml-1 rounded-full p-1 hover:bg-white/10 hover:text-white">
-            <ArrowLeft size={15} />
-          </button>
-        )}
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function MenuItem({ active, disabled, onClick, children }: { active?: boolean; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      disabled={disabled}
-      onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent"
-    >
-      <span className="w-4 shrink-0">{active && <Check size={16} className="text-accent-400" />}</span>
-      <span className="min-w-0 flex-1 truncate">{children}</span>
-    </button>
-  );
-}
-
-function MenuNav({ onClick, value, children }: { onClick: () => void; value: string; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition hover:bg-white/10">
-      <span className="flex-1">{children}</span>
-      <span className="max-w-32 truncate text-ink-400">{value}</span>
-      <ChevronRight size={16} className="text-ink-500" />
-    </button>
-  );
-}
