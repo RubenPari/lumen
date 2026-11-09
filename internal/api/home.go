@@ -121,6 +121,10 @@ func (s *Server) nextUp(userID string, limit int) ([]*db.Item, error) {
 		}
 		series = append(series, id)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	rows.Close()
 	var out []*db.Item
 	for _, sid := range series {
