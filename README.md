@@ -62,6 +62,9 @@ Senza ffmpeg/ffprobe funziona solo la riproduzione diretta dei formati che il br
 - **Audiolibri**: cartelle di file audio o singoli file (m4b/mp3) con capitoli e ripresa dal punto esatto.
 - **Foto**: album per cartella, cronologia per mese con data di scatto EXIF, rotazione automatica, lightbox
   con zoom/swipe e presentazione.
+- **TV in diretta**: playlist M3U/IPTV (porting del parser di Jellyfin: `tvg-id`, `tvg-logo`, `group-title`,
+  numeri canale, user-agent) e guida XMLTV (anche `.gz`, URL o file locale), abbinamento per `tvg-id` o nome,
+  griglia EPG, preferiti, gruppi, cambio canale da tastiera; stream convertiti in HLS live da ffmpeg.
 - **Utenti** multipli con password PBKDF2-SHA512 (come Jellyfin), ruoli admin, sessioni via cookie.
 - **Dashboard admin**: statistiche, chi sta guardando cosa (direct/transcode), stato scansione,
   gestione librerie con selettore di cartelle, utenti, impostazioni.
@@ -75,7 +78,7 @@ Streamyfin, Finamp (musica). Il server viene trovato anche in automatico (discov
 Supportati: login, librerie, navigazione, ricerca, immagini, "Continua a guardare"/"Prossimi episodi",
 PlaybackInfo con negoziazione dal DeviceProfile del client, riproduzione diretta, transcodifica HLS con
 playlist VOD e salto in qualunque punto, sottotitoli esterni/incorporati, posizione e stato visto/preferito,
-keep-alive WebSocket. Non supportati: SyncPlay, controllo remoto, QuickConnect, plugin, gestione del server
+keep-alive WebSocket, TV in diretta (canali, programmi, stream). Non supportati: SyncPlay, controllo remoto, QuickConnect, plugin, gestione del server
 dalle app. Le app che incapsulano la web app di Jellyfin (Android "mobile", Jellyfin Media Player) mostrano
 la web app di Lumen.
 
@@ -119,7 +122,7 @@ make test                                         # go vet + test + typecheck
 
 - Compatibilità Jellyfin parziale (vedi sopra); testata con le sequenze di chiamate dei client, non ancora
   su ogni app reale.
-- Niente Live TV (in arrivo).
+- Live TV senza registrazioni (DVR) né tuner HDHomeRun.
 - I formati `.mobi`/`.azw3`/`.fb2` sono catalogati ma solo scaricabili, non leggibili nel browser; le foto HEIC
   si vedono solo nei browser che le supportano.
 - Le immagini disco `.iso` non sono supportate (le cartelle `VIDEO_TS`/`BDMV` sì).

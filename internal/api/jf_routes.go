@@ -112,6 +112,17 @@ func (s *Server) jellyfinRouter() *jfRouter {
 	jr.post("/PlayingItems/{itemId}", s.jfPlaying("start"))
 	jr.post("/PlayingItems/{itemId}/Progress", s.jfPlaying("progress"))
 	jr.del("/PlayingItems/{itemId}", s.jfPlaying("stop"))
+	// Live TV
+	jr.get("/LiveTv/Info", s.jfLiveInfo)
+	jr.get("/LiveTv/Channels", s.jfLiveChannels)
+	jr.get("/LiveTv/Channels/{channelId}", s.jfLiveChannel)
+	jr.get("/LiveTv/Programs", s.jfLivePrograms)
+	jr.post("/LiveTv/Programs", s.jfLivePrograms)
+	jr.get("/LiveTv/Programs/Recommended", s.jfLivePrograms)
+	jr.get("/LiveTv/Recordings", s.jfEmpty(map[string]any{"Items": []any{}, "TotalRecordCount": 0}))
+	jr.get("/LiveTv/Timers", s.jfEmpty(map[string]any{"Items": []any{}, "TotalRecordCount": 0}))
+	jr.get("/LiveTv/Channels/{channelId}/live.m3u8", s.jfLivePlaylist)
+	jr.get("/LiveTv/Channels/{channelId}/live/{file}", s.jfLiveSegment)
 	return jr
 }
 

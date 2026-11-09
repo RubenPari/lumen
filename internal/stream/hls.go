@@ -28,6 +28,10 @@ type Options struct {
 	// VOD keeps output timestamps aligned with the source (used for
 	// pre-computed VOD playlists served to Jellyfin clients).
 	VOD bool
+	// Live produces a sliding-window playlist from an endless input.
+	Live bool
+	// InputOptions are placed before -i (user agent, reconnect, -re...).
+	InputOptions []string
 	// BurnSubtitle is the absolute index of an image subtitle stream (PGS,
 	// VobSub) to burn into the video; -1 disables it.
 	BurnSubtitle int
@@ -204,6 +208,7 @@ func (m *Manager) Start(it *db.Item, opt Options, owner string) (*Session, error
 			args = append(args, "-hwaccel", "cuda")
 		}
 	}
+	args = append(args, opt.InputOptions...)
 	args = append(args, "-i", InputFor(it))
 	if burn {
 		// Mapped later, after building the filter graph.
@@ -266,9 +271,13 @@ func (m *Manager) Start(it *db.Item, opt Options, owner string) (*Session, error
 	if opt.VOD && opt.Start > 0 {
 		args = append(args, "-output_ts_offset", strconv.FormatFloat(opt.Start, 'f', 3, 64))
 	}
-	args = append(args, "-sn", "-dn", "-max_muxing_queue_size", "2048",
-		"-f", "hls", "-hls_time", strconv.Itoa(segLen), "-hls_list_size", "0", "-hls_playlist_type", "event",
-		"-hls_flags", "independent_segments+temp_file", "-start_number", strconv.Itoa(opt.StartNumber),
+	playlist := []string{"-hls_list_size", "0", "-hls_playlist_type", "event", "-hls_flags", "independent_segments+temp_file"}
+	if opt.Live {
+		playlist = []string{"-hls_list_size", "10", "-hls_flags", "independent_segments+temp_file+delete_segments", "-hls_delete_threshold", "4"}
+	}
+	args = append(args, "-sn", "-dn", "-max_muxing_queue_size", "2048", "-f", "hls", "-hls_time", strconv.Itoa(segLen))
+	args = append(args, playlist...)
+	args = append(args, "-start_number", strconv.Itoa(opt.StartNumber),
 		"-hls_segment_filename", filepath.Join(dir, "seg%05d.ts"), filepath.Join(dir, "index.m3u8"))
 
 	ctx, cancel := context.WithCancel(context.Background())

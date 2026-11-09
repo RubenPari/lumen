@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { BookOpen, Film, Home, Images, LayoutDashboard, LogOut, Music, Search, Settings, Tv } from "lucide-react";
+import { BookOpen, Film, Home, Images, LayoutDashboard, LogOut, Music, Radio, Search, Settings, Tv } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
@@ -8,7 +8,7 @@ import { isMac } from "../lib/format";
 import { useServerEvents } from "../lib/events";
 import { useAudio } from "../lib/audio";
 import { MiniPlayer } from "./MiniPlayer";
-import { useHotkey, useLibraries, useMe, useScrolled } from "../lib/hooks";
+import { useHotkey, useLibraries, useMe, useScrolled, useSystemInfo } from "../lib/hooks";
 import { t } from "../lib/i18n";
 import { SearchPalette } from "./Search";
 import { Avatar, Logo } from "./ui";
@@ -73,6 +73,7 @@ function MenuLink({ to, icon, children, onClick }: { to: string; icon: React.Rea
 export function Layout() {
   const scrolled = useScrolled();
   const { data: libs } = useLibraries();
+  const { data: sys } = useSystemInfo();
   const [searchOpen, setSearchOpen] = useState(false);
   const loc = useLocation();
   const audio = useAudio();
@@ -115,6 +116,11 @@ export function Layout() {
                 {l.name}
               </NavLink>
             ))}
+            {sys?.liveTv && (
+              <NavLink to="/livetv" className={navCls}>
+                {t("Live TV")}
+              </NavLink>
+            )}
           </nav>
           <div className="flex-1" />
           <button
@@ -136,7 +142,8 @@ export function Layout() {
       {/* Mobile tab bar */}
       <nav className="glass fixed inset-x-0 bottom-0 z-50 flex border-t border-white/[0.06] pb-[env(safe-area-inset-bottom)] sm:hidden">
         <TabLink to="/" icon={<Home size={21} />} label={t("Home")} end />
-        {libs?.slice(0, 3).map((l) => (
+        {sys?.liveTv && <TabLink to="/livetv" icon={<Radio size={21} />} label="TV" />}
+        {libs?.slice(0, sys?.liveTv ? 2 : 3).map((l) => (
           <TabLink key={l.id} to={`/library/${l.id}`} icon={libIcon(l.type)} label={l.name} />
         ))}
         <button onClick={() => setSearchOpen(true)} className="flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] text-ink-400">

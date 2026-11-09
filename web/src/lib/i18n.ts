@@ -224,6 +224,28 @@ Object.assign(it, {
   "{0} songs": "{0} brani",
 });
 
+Object.assign(it, {
+  "Live TV": "TV in diretta",
+  "Channels": "Canali",
+  "Guide": "Guida",
+  "No guide data": "Nessuna informazione",
+  "No channels": "Nessun canale",
+  "Add an M3U playlist in the dashboard.": "Aggiungi una playlist M3U dalla dashboard.",
+  "Previous channel": "Canale precedente",
+  "Next channel": "Canale successivo",
+  "Refresh": "Aggiorna",
+  "Add source": "Aggiungi sorgente",
+  "Add an M3U playlist with your channels and, optionally, an XMLTV guide. Channels are matched to the guide by tvg-id or name.": "Aggiungi una playlist M3U con i tuoi canali e, se vuoi, una guida XMLTV. I canali vengono abbinati alla guida tramite tvg-id o nome.",
+  "{0} channels": "{0} canali",
+  "{0} programs": "{0} programmi",
+  "Last refresh": "Ultimo aggiornamento",
+  "M3U playlist": "Playlist M3U",
+  "XMLTV guide": "Guida XMLTV",
+  "URL or file path": "URL o percorso del file",
+  "Optional": "Facoltativo",
+  "Later": "A seguire",
+});
+
 const dicts: Record<string, Record<string, string>> = { it };
 
 let lang = (typeof navigator !== "undefined" ? navigator.language : "en").slice(0, 2);

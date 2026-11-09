@@ -17,6 +17,7 @@ import (
 
 	"github.com/rubenpari/lumen/internal/db"
 	"github.com/rubenpari/lumen/internal/events"
+	"github.com/rubenpari/lumen/internal/livetv"
 	"github.com/rubenpari/lumen/internal/metadata"
 	"github.com/rubenpari/lumen/internal/scanner"
 	"github.com/rubenpari/lumen/internal/stream"
@@ -37,6 +38,7 @@ type Server struct {
 	Log       *slog.Logger
 	Web       fs.FS // built web client (may be nil)
 	Events    *events.Hub
+	LiveTV    *livetv.Service
 	Watcher   interface{ Sync() } // realtime library monitor (may be nil)
 	startedAt time.Time
 
@@ -187,6 +189,17 @@ func (s *Server) Handler() http.Handler {
 	auth("GET /api/items/{id}/pages/{n}", s.page)
 	auth("PUT /api/items/{id}/reading", s.reading)
 
+	// Live TV
+	auth("GET /api/livetv/channels", s.listLiveChannels)
+	auth("GET /api/livetv/guide", s.liveGuide)
+	auth("POST /api/livetv/channels/{id}/hls", s.liveHLS)
+	auth("POST /api/livetv/channels/{id}/favorite", s.liveFavorite(true))
+	auth("DELETE /api/livetv/channels/{id}/favorite", s.liveFavorite(false))
+	admin("GET /api/admin/livetv/sources", s.liveSources)
+	admin("POST /api/admin/livetv/sources", s.addLiveSource)
+	admin("DELETE /api/admin/livetv/sources/{id}", s.deleteLiveSource)
+	admin("POST /api/admin/livetv/refresh", s.refreshLive)
+
 	// Administration
 	admin("POST /api/libraries", s.createLibrary)
 	admin("PATCH /api/libraries/{id}", s.updateLibrary)
@@ -263,6 +276,7 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) error {
 		"version":       Version,
 		"setupRequired": s.DB.CountUsers() == 0,
 		"ffmpeg":        s.FFmpeg != "",
+		"liveTv":        s.liveTVChannelCount() > 0,
 	})
 }
 
@@ -309,4 +323,10 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) error {
 			fl.Flush()
 		}
 	}
+}
+
+func (s *Server) liveTVChannelCount() int {
+	var n int
+	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM livetv_channels`).Scan(&n)
+	return n
 }

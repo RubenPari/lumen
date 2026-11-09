@@ -14,12 +14,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/rubenpari/lumen/internal/api"
 	"github.com/rubenpari/lumen/internal/db"
 	"github.com/rubenpari/lumen/internal/events"
+	"github.com/rubenpari/lumen/internal/livetv"
 	"github.com/rubenpari/lumen/internal/metadata"
 	"github.com/rubenpari/lumen/internal/scanner"
 	"github.com/rubenpari/lumen/internal/stream"
@@ -103,6 +105,10 @@ func main() {
 		TMDB: func() *metadata.TMDB { return srv.TMDB() }}
 	srv.Scanner.OnChange = func() { srv.Events.Publish(events.Event{Type: "library.changed"}) }
 
+	srv.LiveTV = livetv.New(database, log)
+	srv.LiveTV.Lang = func() string { return strings.SplitN(database.GetSetting("metadata_language", "en-US"), "-", 2)[0] }
+	srv.LiveTV.OnChange = func() { srv.Events.Publish(events.Event{Type: "livetv.changed"}) }
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -112,6 +118,11 @@ func main() {
 		w.Sync()
 		srv.Watcher = w
 	}
+
+	go func() {
+		srv.LiveTV.RefreshAll(ctx)
+		srv.LiveTV.Run(ctx, 12*time.Hour)
+	}()
 
 	// Periodic library scan.
 	go func() {

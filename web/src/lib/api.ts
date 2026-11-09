@@ -117,6 +117,7 @@ export interface SystemInfo {
   version: string;
   setupRequired: boolean;
   ffmpeg: boolean;
+  liveTv: boolean;
 }
 
 export interface HomeRow {

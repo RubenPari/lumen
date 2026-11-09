@@ -12,11 +12,12 @@ import (
 )
 
 // Probe runs ffprobe on a file and returns technical media information.
-func Probe(ctx context.Context, ffprobe, path string) (db.MediaInfo, float64, error) {
+// Extra arguments (e.g. -user_agent) are placed before the input.
+func Probe(ctx context.Context, ffprobe, path string, extra ...string) (db.MediaInfo, float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, ffprobe, "-v", "quiet", "-print_format", "json",
-		"-show_format", "-show_streams", "-show_chapters", path).Output()
+	args := append([]string{"-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters"}, extra...)
+	out, err := exec.CommandContext(ctx, ffprobe, append(args, path)...).Output()
 	if err != nil {
 		return db.MediaInfo{}, 0, err
 	}

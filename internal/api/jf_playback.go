@@ -235,6 +235,11 @@ func canDirectPlay(it *db.Item, p *deviceProfile, audioIndex int) bool {
 func (s *Server) jfPlaybackInfo(w http.ResponseWriter, r *http.Request) error {
 	it, err := s.DB.GetItem(normID(jfParam(r, "itemId")))
 	if err != nil {
+		if s.LiveTV != nil {
+			if ch, cerr := s.LiveTV.Channel(normID(jfParam(r, "itemId"))); cerr == nil {
+				return s.jfLivePlaybackInfo(w, r, ch)
+			}
+		}
 		return err
 	}
 	var body struct {

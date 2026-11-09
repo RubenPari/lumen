@@ -658,6 +658,11 @@ func (s *Server) jfGetItem(w http.ResponseWriter, r *http.Request) error {
 	}
 	it, err := s.DB.GetItem(id)
 	if err != nil {
+		if s.LiveTV != nil {
+			if ch, cerr := s.LiveTV.Channel(id); cerr == nil {
+				return jfJSON(w, s.jfChannelDto(ch, false))
+			}
+		}
 		return err
 	}
 	c, err := s.jfContext(r, []*db.Item{it}, true)

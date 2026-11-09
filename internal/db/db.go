@@ -181,6 +181,29 @@ var migrations = []string{
 		user_id TEXT NOT NULL, pref_id TEXT NOT NULL, client TEXT NOT NULL, data TEXT NOT NULL,
 		PRIMARY KEY (user_id, pref_id, client)
 	);`,
+	// 3: Live TV (M3U tuners + XMLTV guides).
+	`CREATE TABLE IF NOT EXISTS livetv_sources (
+		id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL,
+		user_agent TEXT NOT NULL DEFAULT '', last_refresh INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+		item_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS livetv_channels (
+		id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES livetv_sources(id) ON DELETE CASCADE,
+		number TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, logo TEXT NOT NULL DEFAULT '', group_title TEXT NOT NULL DEFAULT '',
+		tvg_id TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, sort INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_livetv_channels_tvg ON livetv_channels(tvg_id);
+	CREATE TABLE IF NOT EXISTS livetv_programs (
+		id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES livetv_sources(id) ON DELETE CASCADE,
+		channel TEXT NOT NULL, start INTEGER NOT NULL, stop INTEGER NOT NULL, title TEXT NOT NULL,
+		subtitle TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
+		icon TEXT NOT NULL DEFAULT '', episode TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX IF NOT EXISTS idx_livetv_programs ON livetv_programs(channel, start);
+	CREATE TABLE IF NOT EXISTS livetv_guide_channels (
+		source_id TEXT NOT NULL REFERENCES livetv_sources(id) ON DELETE CASCADE, xml_id TEXT NOT NULL,
+		name TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', PRIMARY KEY (source_id, xml_id)
+	);`,
 }
 
 func migrate(d *sql.DB) error {

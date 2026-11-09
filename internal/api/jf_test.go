@@ -116,7 +116,7 @@ func TestJellyfinClientFlow(t *testing.T) {
 		t.Fatalf("views: %+v", views)
 	}
 	type qr struct {
-		Items []map[string]any
+		Items            []map[string]any
 		TotalRecordCount int
 	}
 	var movies qr

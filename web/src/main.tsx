@@ -23,6 +23,9 @@ const AdminLayout = lazy(() => import("./pages/Admin").then((m) => ({ default: m
 const AdminDashboard = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminDashboard })));
 const AdminLibraries = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminLibraries })));
 const AdminUsers = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminUsers })));
+const AdminLiveTV = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminLiveTV })));
+const LiveTV = lazy(() => import("./pages/LiveTV").then((m) => ({ default: m.LiveTV })));
+const LivePlayer = lazy(() => import("./pages/LivePlayer").then((m) => ({ default: m.LivePlayer })));
 const AdminSettings = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminSettings })));
 
 const queryClient = new QueryClient({
@@ -91,17 +94,20 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
             <Route path="/play/:id" element={<Guard><Player /></Guard>} />
             <Route path="/read/:id" element={<Guard><Reader /></Guard>} />
+            <Route path="/live/:id" element={<Guard><LivePlayer /></Guard>} />
             <Route element={<Guard><Layout /></Guard>}>
               <Route index element={<Home />} />
               <Route path="library/:id" element={<Library />} />
               <Route path="browse" element={<Browse />} />
               <Route path="item/:id" element={<ItemPage />} />
               <Route path="settings" element={<UserSettings />} />
+              <Route path="livetv" element={<LiveTV />} />
               <Route path="admin" element={<Guard admin><AdminLayout /></Guard>}>
                 <Route index element={<AdminDashboard />} />
                 <Route path="libraries" element={<AdminLibraries />} />
                 <Route path="users" element={<AdminUsers />} />
                 <Route path="settings" element={<AdminSettings />} />
+                <Route path="livetv" element={<AdminLiveTV />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Route>
