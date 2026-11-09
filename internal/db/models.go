@@ -142,6 +142,18 @@ type Item struct {
 	DiscType    string   `json:"discType,omitempty"` // dvd, bluray
 }
 
+// BookSeries is the series name for a book. It is stored in AlbumArtist.
+func (it *Item) BookSeries() string { return it.AlbumArtist }
+
+// SetBookSeries records a book series name.
+func (it *Item) SetBookSeries(name string) { it.AlbumArtist = name }
+
+// BookIndex is the position of a book inside its series. It is stored in TrackNumber.
+func (it *Item) BookIndex() *int { return it.TrackNumber }
+
+// SetBookIndex records a book's position inside its series.
+func (it *Item) SetBookIndex(n *int) { it.TrackNumber = n }
+
 var itemColumns = []string{"id", "library_id", "type", "parent_id", "series_id", "season_id", "name", "original_title", "sort_name",
 	"path", "is_folder", "year", "overview", "tagline", "premiere_date", "end_date", "status", "community_rating", "official_rating", "duration",
 	"season_number", "episode_number", "episode_end", "container", "size", "mtime", "genres", "studios", "people", "tmdb_id", "imdb_id",

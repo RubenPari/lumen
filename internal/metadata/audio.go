@@ -50,6 +50,16 @@ func ReadAudioTags(path string) (AudioTags, error) {
 	return t, nil
 }
 
+// FirstNonEmpty returns the first value that is not empty after trimming.
+func FirstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s = strings.TrimSpace(s); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // SplitArtists splits "A feat. B; C" style artist strings.
 func SplitArtists(s string) []string {
 	if s == "" {

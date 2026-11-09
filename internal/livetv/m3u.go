@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/rubenpari/lumen/internal/metadata"
 )
 
 // Channel is a channel parsed from an M3U playlist.
@@ -99,7 +101,7 @@ func ParseM3U(r io.Reader) []Channel {
 			}
 			attrs, rest := parseExtInf(extInf)
 			name, number := channelName(rest, attrs)
-			if n := firstNonEmpty(attrs["tvg-chno"], attrs["channel-number"], attrs["tvg-num"]); n != "" {
+			if n := metadata.FirstNonEmpty(attrs["tvg-chno"], attrs["channel-number"], attrs["tvg-num"]); n != "" {
 				number = n
 			}
 			if name == "" {
@@ -107,8 +109,8 @@ func ParseM3U(r io.Reader) []Channel {
 			}
 			ch := Channel{
 				Number: number, Name: name, URL: line, UserAgent: ua,
-				Logo: firstNonEmpty(attrs["tvg-logo"], attrs["logo"]), Group: attrs["group-title"],
-				TvgID: firstNonEmpty(attrs["tvg-id"], attrs["channel-id"]),
+				Logo: metadata.FirstNonEmpty(attrs["tvg-logo"], attrs["logo"]), Group: attrs["group-title"],
+				TvgID: metadata.FirstNonEmpty(attrs["tvg-id"], attrs["channel-id"]),
 			}
 			out = append(out, ch)
 			extInf = ""
@@ -120,13 +122,4 @@ func ParseM3U(r io.Reader) []Channel {
 		}
 	}
 	return out
-}
-
-func firstNonEmpty(v ...string) string {
-	for _, s := range v {
-		if strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
 }

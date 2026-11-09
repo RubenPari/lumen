@@ -56,8 +56,9 @@ func (ls *libScan) buildBook(file string) {
 			it.Name = fmt.Sprintf("%s #%d", info.SeriesName, *info.Index)
 		}
 	}
-	it.AlbumArtist = info.SeriesName
-	it.TrackNumber, it.DiscNumber = info.Index, info.ParentIndex
+	it.SetBookSeries(info.SeriesName)
+	it.SetBookIndex(info.Index)
+	it.DiscNumber = info.ParentIndex
 	if info.Year != nil {
 		it.Year = *info.Year
 	}
@@ -80,10 +81,10 @@ func (ls *libScan) buildBook(file string) {
 			it.Year, it.PremiereDate = y, m.Date
 		}
 		if m.Series != "" {
-			it.AlbumArtist = m.Series
+			it.SetBookSeries(m.Series)
 			if f, err := strconv.ParseFloat(m.SeriesIndex, 64); err == nil {
 				n := int(f)
-				it.TrackNumber = &n
+				it.SetBookIndex(&n)
 			}
 		}
 		it.ImgPrimary = metadata.SaveEmbedded(ls.s.cacheDir(), it.ID, m.Cover, m.CoverExt)
@@ -140,7 +141,7 @@ func (ls *libScan) buildAudioBook(path string, files []string) {
 	} else if tags.Title != "" && len(files) == 1 {
 		book.Name = tags.Title
 	}
-	if a := metadata.SplitArtists(firstNonEmpty(tags.AlbumArtist, tags.Artist)); len(a) > 0 {
+	if a := metadata.SplitArtists(metadata.FirstNonEmpty(tags.AlbumArtist, tags.Artist)); len(a) > 0 {
 		book.Artists = a
 	}
 	if tags.Year > 0 {
@@ -195,13 +196,4 @@ func (ls *libScan) buildAudioBook(path string, files []string) {
 		ls.s.Log.Error("save audiobook", "path", path, "err", err)
 	}
 	ls.progress(book.Name)
-}
-
-func firstNonEmpty(v ...string) string {
-	for _, s := range v {
-		if s != "" {
-			return s
-		}
-	}
-	return ""
 }
