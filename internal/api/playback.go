@@ -359,6 +359,17 @@ func (s *Server) playbackInfo(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
+func setMediaContentType(w http.ResponseWriter, path string) {
+	ext := filepath.Ext(path)
+	if ct := mime.TypeByExtension(ext); ct != "" {
+		w.Header().Set("Content-Type", ct)
+		return
+	}
+	if strings.EqualFold(ext, ".mkv") {
+		w.Header().Set("Content-Type", "video/x-matroska")
+	}
+}
+
 func (s *Server) directStream(w http.ResponseWriter, r *http.Request) error {
 	it, err := s.DB.GetItem(r.PathValue("id"))
 	if err != nil {
@@ -367,11 +378,7 @@ func (s *Server) directStream(w http.ResponseWriter, r *http.Request) error {
 	if it.IsFolder || it.DiscType != "" {
 		return errf(http.StatusBadRequest, "not directly playable")
 	}
-	if ct := mime.TypeByExtension(filepath.Ext(it.Path)); ct != "" {
-		w.Header().Set("Content-Type", ct)
-	} else if strings.EqualFold(filepath.Ext(it.Path), ".mkv") {
-		w.Header().Set("Content-Type", "video/x-matroska")
-	}
+	setMediaContentType(w, it.Path)
 	http.ServeFile(w, r, it.Path)
 	return nil
 }

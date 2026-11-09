@@ -2,9 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
-	"mime"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -330,11 +330,7 @@ func (s *Server) jfStream(w http.ResponseWriter, r *http.Request) error {
 	if it.Type == db.TypeAudio && strings.EqualFold(jfQuery(r, "static"), "false") && s.FFmpeg != "" {
 		return s.jfTranscodeAudio(w, r, it)
 	}
-	if ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(it.Path))); ct != "" {
-		w.Header().Set("Content-Type", ct)
-	} else if strings.EqualFold(filepath.Ext(it.Path), ".mkv") {
-		w.Header().Set("Content-Type", "video/x-matroska")
-	}
+	setMediaContentType(w, it.Path)
 	http.ServeFile(w, r, it.Path)
 	return nil
 }
@@ -626,16 +622,18 @@ func (s *Server) jfDisplayPrefs(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		b, _ := json.Marshal(body)
-		_, err := s.DB.Exec(`INSERT INTO display_prefs(user_id,pref_id,client,data) VALUES(?,?,?,?) ON CONFLICT(user_id,pref_id,client) DO UPDATE SET data=excluded.data`, u.ID, id, client, string(b))
-		if err != nil {
+		if err := s.DB.SetDisplayPref(u.ID, id, client, string(b)); err != nil {
 			return err
 		}
 		return noContent(w)
 	}
-	var data string
-	if err := s.DB.QueryRow(`SELECT data FROM display_prefs WHERE user_id=? AND pref_id=? AND client=?`, u.ID, id, client).Scan(&data); err == nil {
+	data, err := s.DB.DisplayPref(u.ID, id, client)
+	if err == nil {
 		w.Header().Set("Content-Type", "application/json")
 		_, err := w.Write([]byte(data))
+		return err
+	}
+	if !errors.Is(err, db.ErrNotFound) {
 		return err
 	}
 	return jfJSON(w, map[string]any{
