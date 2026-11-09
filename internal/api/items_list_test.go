@@ -97,6 +97,7 @@ func TestSharedItemListingAndHydration(t *testing.T) {
 		SeasonName    string `json:"seasonName"`
 		EpisodeCount  int    `json:"episodeCount"`
 		UnplayedCount int    `json:"unplayedCount"`
+		ChildCount    int    `json:"childCount"`
 		UserData      struct {
 			Played   bool    `json:"played"`
 			Position float64 `json:"position"`
@@ -224,10 +225,10 @@ func TestSharedItemListingAndHydration(t *testing.T) {
 		byID[it.ID] = it
 	}
 	harbor, closed := byID["sharbor"], byID["sclosed"]
-	if harbor.EpisodeCount != 3 || harbor.UnplayedCount != 2 || harbor.UserData.Played {
+	if harbor.EpisodeCount != 3 || harbor.UnplayedCount != 2 || harbor.ChildCount != 2 || harbor.UserData.Played {
 		t.Fatalf("harbor hydration: %+v", harbor)
 	}
-	if closed.EpisodeCount != 1 || closed.UnplayedCount != 0 || !closed.UserData.Played {
+	if closed.EpisodeCount != 1 || closed.UnplayedCount != 0 || closed.ChildCount != 1 || !closed.UserData.Played {
 		t.Fatalf("closed hydration: %+v", closed)
 	}
 	eps := native("type=Episode&seriesId=sharbor&sort=name")

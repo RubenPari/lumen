@@ -51,6 +51,22 @@ func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 	if err != nil {
 		return nil, err
 	}
+	audioN, err := s.DB.CountGrouped("parent_id", db.TypeAudio, idsOfType(items, db.TypeMusicAlbum, db.TypeAudioBook))
+	if err != nil {
+		return nil, err
+	}
+	albumN, err := s.DB.CountGrouped("artist_id", db.TypeMusicAlbum, idsOfType(items, db.TypeMusicArtist))
+	if err != nil {
+		return nil, err
+	}
+	photoN, err := s.DB.CountGrouped("parent_id", db.TypePhoto, idsOfType(items, db.TypePhotoAlbum))
+	if err != nil {
+		return nil, err
+	}
+	seasonN, err := s.DB.CountGrouped("parent_id", db.TypeSeason, idsOfType(items, db.TypeSeries))
+	if err != nil {
+		return nil, err
+	}
 	out := make([]*ItemDTO, len(items))
 	seriesLike := false
 	for i, it := range items {
@@ -64,12 +80,15 @@ func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 		switch it.Type {
 		case db.TypeSeries, db.TypeSeason:
 			seriesLike = true
+			if it.Type == db.TypeSeries {
+				out[i].ChildCount = seasonN[it.ID]
+			}
 		case db.TypeMusicAlbum, db.TypeAudioBook:
-			_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE parent_id=? AND type='Audio'`, it.ID).Scan(&out[i].ChildCount)
+			out[i].ChildCount = audioN[it.ID]
 		case db.TypeMusicArtist:
-			_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE artist_id=? AND type='MusicAlbum'`, it.ID).Scan(&out[i].ChildCount)
+			out[i].ChildCount = albumN[it.ID]
 		case db.TypePhotoAlbum:
-			_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE parent_id=? AND type='Photo'`, it.ID).Scan(&out[i].ChildCount)
+			out[i].ChildCount = photoN[it.ID]
 		}
 	}
 	if seriesLike {
@@ -77,9 +96,6 @@ func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 			if c, ok := facts.Counts[d.ID]; ok {
 				d.EpisodeCount, d.UnplayedCount = c[0], c[0]-c[1]
 				d.UserData.Played = c[0] > 0 && c[1] == c[0]
-			}
-			if d.Type == db.TypeSeries {
-				_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE parent_id=? AND type='Season'`, d.ID).Scan(&d.ChildCount)
 			}
 		}
 	}
@@ -99,6 +115,20 @@ func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 		}
 	}
 	return out, nil
+}
+
+func idsOfType(items []*db.Item, types ...string) []string {
+	want := make(map[string]bool, len(types))
+	for _, t := range types {
+		want[t] = true
+	}
+	var ids []string
+	for _, it := range items {
+		if want[it.Type] {
+			ids = append(ids, it.ID)
+		}
+	}
+	return ids
 }
 
 func (s *Server) one(r *http.Request, it *db.Item) (*ItemDTO, error) {

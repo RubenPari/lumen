@@ -608,9 +608,11 @@ func (s *Server) jfGetItem(w http.ResponseWriter, r *http.Request) error {
 	}
 	d := s.jfItem(c, it)
 	if it.Type == db.TypeSeries {
-		var n int
-		_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE parent_id=? AND type='Season'`, it.ID).Scan(&n)
-		d["ChildCount"] = n
+		n, err := s.DB.CountGrouped("parent_id", db.TypeSeason, []string{it.ID})
+		if err != nil {
+			return err
+		}
+		d["ChildCount"] = n[it.ID]
 	}
 	return jfJSON(w, d)
 }
