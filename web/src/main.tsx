@@ -19,14 +19,14 @@ document.documentElement.lang = currentLang();
 
 const Reader = lazy(() => import("./pages/Reader").then((m) => ({ default: m.Reader })));
 const Player = lazy(() => import("./pages/Player").then((m) => ({ default: m.Player })));
-const AdminLayout = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminLayout })));
-const AdminDashboard = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminDashboard })));
-const AdminLibraries = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminLibraries })));
-const AdminUsers = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminUsers })));
-const AdminLiveTV = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminLiveTV })));
+const AdminLayout = lazy(() => import("./pages/admin/Layout").then((m) => ({ default: m.AdminLayout })));
+const AdminDashboard = lazy(() => import("./pages/admin/Dashboard").then((m) => ({ default: m.AdminDashboard })));
+const AdminLibraries = lazy(() => import("./pages/admin/Libraries").then((m) => ({ default: m.AdminLibraries })));
+const AdminUsers = lazy(() => import("./pages/admin/Users").then((m) => ({ default: m.AdminUsers })));
+const AdminLiveTV = lazy(() => import("./pages/admin/LiveTV").then((m) => ({ default: m.AdminLiveTV })));
 const LiveTV = lazy(() => import("./pages/LiveTV").then((m) => ({ default: m.LiveTV })));
 const LivePlayer = lazy(() => import("./pages/LivePlayer").then((m) => ({ default: m.LivePlayer })));
-const AdminSettings = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminSettings })));
+const AdminSettings = lazy(() => import("./pages/admin/Settings").then((m) => ({ default: m.AdminSettings })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
