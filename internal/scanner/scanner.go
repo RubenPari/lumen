@@ -41,7 +41,8 @@ type Scanner struct {
 	TMDB    func() *metadata.TMDB // nil result when not configured
 	Log     *slog.Logger
 
-	Events *events.Hub
+	Events   *events.Hub
+	CacheDir string // for extracted artwork
 
 	mu       sync.Mutex
 	status   Status
@@ -165,6 +166,9 @@ func (s *Scanner) RefreshItem(ctx context.Context, id string) error {
 }
 
 func (s *Scanner) cacheDir() string {
+	if s.CacheDir != "" {
+		return s.CacheDir
+	}
 	if t := s.TMDB(); t != nil {
 		return t.CacheDir
 	}
@@ -198,6 +202,12 @@ func (ls *libScan) scanRoot(root string) {
 	switch ls.lib.Type {
 	case "tvshows":
 		ls.scanShowsRoot(root)
+	case "music":
+		ls.scanMusicDir(root, root)
+	case "photos":
+		ls.scanPhotoDir(root, root)
+	case "books":
+		ls.scanBooksDir(root, root)
 	default:
 		ls.scanMovieDir(root, root)
 	}
@@ -209,6 +219,10 @@ func (ls *libScan) scanUnit(unit, root string) {
 	if err != nil {
 		return // deleted: its items are removed by the caller
 	}
+	dir := unit
+	if !fi.IsDir() {
+		dir = filepath.Dir(unit)
+	}
 	switch ls.lib.Type {
 	case "tvshows":
 		if fi.IsDir() && unit != root {
@@ -216,6 +230,21 @@ func (ls *libScan) scanUnit(unit, root string) {
 		} else {
 			ls.scanShowsRoot(root)
 		}
+	case "music":
+		ls.scanMusicDir(dir, root)
+	case "photos":
+		ls.scanPhotoDir(dir, root)
+	case "books":
+		if !fi.IsDir() {
+			// A single file in the root: only rescan that file.
+			if naming.IsBookFile(unit) {
+				ls.buildBook(unit)
+			} else if naming.IsAudioFile(unit) {
+				ls.buildAudioBook(unit, []string{unit})
+			}
+			return
+		}
+		ls.scanBooksDir(dir, root)
 	default:
 		if fi.IsDir() {
 			ls.scanMovieDir(unit, root)
@@ -267,6 +296,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib *db.Library) error {
 		}
 	}
 	ls.removeUnseen()
+	s.pruneArtists(lib.ID)
 	lib.LastScan = db.Now()
 	_ = s.DB.SaveLibrary(lib)
 	if t := s.TMDB(); t != nil {
@@ -304,6 +334,7 @@ func (s *Scanner) ScanPaths(ctx context.Context, lib *db.Library, units []string
 		ls.scanUnit(unit, root)
 		ls.removeUnseen()
 	}
+	s.pruneArtists(lib.ID)
 	if t := s.TMDB(); t != nil {
 		s.fetchRemote(ctx, lib, t)
 	}
@@ -875,6 +906,9 @@ func isDigits(s string) bool {
 
 // fetchRemote enriches items from TMDB for those not fetched yet.
 func (s *Scanner) fetchRemote(ctx context.Context, lib *db.Library, t *metadata.TMDB) {
+	if lib.Type != "movies" && lib.Type != "tvshows" {
+		return // TMDB only covers movies and shows
+	}
 	typ := db.TypeMovie
 	if lib.Type == "tvshows" {
 		typ = db.TypeSeries

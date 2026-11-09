@@ -98,7 +98,7 @@ func main() {
 		Streams: streams, Images: stream.NewImageCache(filepath.Join(cacheDir, "images")), Web: web.FS(),
 	}
 	srv.Events = events.New()
-	srv.Scanner = &scanner.Scanner{DB: database, FFprobe: ffprobe, Log: log, Events: srv.Events,
+	srv.Scanner = &scanner.Scanner{DB: database, FFprobe: ffprobe, Log: log, Events: srv.Events, CacheDir: cacheDir,
 		TMDB: func() *metadata.TMDB { return srv.TMDB() }}
 	srv.Scanner.OnChange = func() { srv.Events.Publish(events.Event{Type: "library.changed"}) }
 

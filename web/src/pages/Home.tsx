@@ -4,6 +4,7 @@ import { FolderPlus, Info, Play, Star } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { LandscapeCard, PosterCard, Row, SkeletonCard } from "../components/cards";
+import { MediaCard } from "../components/media";
 import { Button, EmptyState } from "../components/ui";
 import { api, backdropImage, logoImage, type HomeRow, type Item } from "../lib/api";
 import { formatDuration, progressPct, yearRange } from "../lib/format";
@@ -155,7 +156,7 @@ export function Home() {
       {data?.featured.length ? <Hero items={data.featured} /> : <div className="h-24" />}
       <div className={clsx("relative z-10 space-y-8 pb-16 sm:space-y-10", data?.featured.length && "-mt-[10svh]")}>
         {data?.rows.map((r) => {
-          const landscape = r.kind === "resume" || r.kind === "nextup";
+          const landscape = (r.kind === "resume" || r.kind === "nextup") && r.items.some((i) => i.type === "Movie" || i.type === "Episode");
           return (
             <Row
               key={r.id}
@@ -169,7 +170,15 @@ export function Home() {
                 ) : undefined
               }
             >
-              {r.items.map((it) => (landscape ? <LandscapeCard key={it.id} item={it} /> : <PosterCard key={it.id} item={it} />))}
+              {r.items.map((it) =>
+                landscape && (it.type === "Movie" || it.type === "Episode") ? (
+                  <LandscapeCard key={it.id} item={it} />
+                ) : isMedia(it) ? (
+                  <MediaCard key={it.id} item={it} />
+                ) : (
+                  <PosterCard key={it.id} item={it} />
+                ),
+              )}
             </Row>
           );
         })}
@@ -177,3 +186,5 @@ export function Home() {
     </div>
   );
 }
+
+const isMedia = (it: Item) => ["MusicAlbum", "MusicArtist", "AudioBook", "Book", "PhotoAlbum"].includes(it.type);

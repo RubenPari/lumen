@@ -10,7 +10,10 @@ import (
 	_ "image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+
+	"github.com/rubenpari/lumen/internal/metadata"
 
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
@@ -70,13 +73,21 @@ func (c *ImageCache) Resized(src string, width int) (string, error) {
 	if err != nil {
 		return src, nil // unknown format: serve the original
 	}
+	orient := 1
+	if ext := strings.ToLower(filepath.Ext(src)); ext == ".jpg" || ext == ".jpeg" {
+		orient = metadata.Orientation(src)
+	}
 	b := img.Bounds()
-	if b.Dx() <= width {
+	if b.Dx() <= width && orient == 1 {
 		return src, nil
 	}
+	if width > b.Dx() {
+		width = b.Dx()
+	}
 	height := b.Dy() * width / b.Dx()
-	out := image.NewRGBA(image.Rect(0, 0, width, height))
-	draw.CatmullRom.Scale(out, out.Bounds(), img, b, draw.Src, nil)
+	var out image.Image = image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.CatmullRom.Scale(out.(*image.RGBA), out.Bounds(), img, b, draw.Src, nil)
+	out = applyOrientation(out, orient)
 	_ = os.MkdirAll(filepath.Dir(dst), 0o755)
 	tmp := dst + ".tmp"
 	w, err := os.Create(tmp)
@@ -90,4 +101,41 @@ func (c *ImageCache) Resized(src string, width int) (string, error) {
 	}
 	w.Close()
 	return dst, os.Rename(tmp, dst)
+}
+
+// applyOrientation rotates/flips an image according to its EXIF orientation.
+func applyOrientation(img image.Image, o int) image.Image {
+	if o <= 1 || o > 8 {
+		return img
+	}
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	ow, oh := w, h
+	if o >= 5 {
+		ow, oh = h, w
+	}
+	out := image.NewRGBA(image.Rect(0, 0, ow, oh))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var nx, ny int
+			switch o {
+			case 2:
+				nx, ny = w-1-x, y
+			case 3:
+				nx, ny = w-1-x, h-1-y
+			case 4:
+				nx, ny = x, h-1-y
+			case 5:
+				nx, ny = y, x
+			case 6:
+				nx, ny = h-1-y, x
+			case 7:
+				nx, ny = h-1-y, w-1-x
+			case 8:
+				nx, ny = y, w-1-x
+			}
+			out.Set(nx, ny, img.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
 }

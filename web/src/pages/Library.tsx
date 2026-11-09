@@ -7,10 +7,21 @@ import { Chip, EmptyState, IconButton, Select } from "../components/ui";
 import { api, type Item } from "../lib/api";
 import { useInView, useLibraries } from "../lib/hooks";
 import { t } from "../lib/i18n";
+import { BookLibrary } from "./Books";
+import { MusicLibrary } from "./Music";
+import { PhotoLibrary } from "./Photos";
 
 const PAGE = 60;
 
-function ItemGrid({ params, header }: { params: URLSearchParams; header: React.ReactNode }) {
+export function ItemGrid({
+  params,
+  header,
+  renderItem = (it) => <PosterCard key={it.id} item={it} />,
+}: {
+  params: URLSearchParams;
+  header: React.ReactNode;
+  renderItem?: (it: Item) => React.ReactNode;
+}) {
   const [ref, inView] = useInView<HTMLDivElement>();
   const key = params.toString();
   const q = useInfiniteQuery({
@@ -45,11 +56,7 @@ function ItemGrid({ params, header }: { params: URLSearchParams; header: React.R
       ) : items.length === 0 ? (
         <EmptyState icon={<Film size={28} />} title={t("Nothing here yet")} />
       ) : (
-        <Grid>
-          {items.map((it) => (
-            <PosterCard key={it.id} item={it} />
-          ))}
-        </Grid>
+        <Grid>{items.map((it) => renderItem(it))}</Grid>
       )}
       <div ref={ref} className="h-10" />
     </>
@@ -59,6 +66,16 @@ function ItemGrid({ params, header }: { params: URLSearchParams; header: React.R
 const LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 
 export function Library() {
+  const { id } = useParams();
+  const { data: libs } = useLibraries();
+  const lib = libs?.find((l) => l.id === id);
+  if (lib?.type === "music") return <MusicLibrary lib={lib} />;
+  if (lib?.type === "photos") return <PhotoLibrary lib={lib} />;
+  if (lib?.type === "books") return <BookLibrary lib={lib} />;
+  return <VideoLibrary />;
+}
+
+function VideoLibrary() {
   const { id } = useParams();
   const { data: libs } = useLibraries();
   const lib = libs?.find((l) => l.id === id);

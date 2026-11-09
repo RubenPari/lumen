@@ -27,8 +27,10 @@ func (b *libraryBody) validate() error {
 	if b.Name == "" {
 		return errf(http.StatusBadRequest, "name is required")
 	}
-	if b.Type != "movies" && b.Type != "tvshows" {
-		return errf(http.StatusBadRequest, "type must be movies or tvshows")
+	switch b.Type {
+	case "movies", "tvshows", "music", "photos", "books":
+	default:
+		return errf(http.StatusBadRequest, "type must be one of movies, tvshows, music, photos, books")
 	}
 	var clean []string
 	for _, p := range b.Paths {

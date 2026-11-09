@@ -6,6 +6,7 @@ import { Layout } from "./components/Layout";
 import { Button, EmptyState, Spinner, ToastProvider } from "./components/ui";
 import "./index.css";
 import { ApiError } from "./lib/api";
+import { AudioProvider } from "./lib/audio";
 import { useMe, useSystemInfo } from "./lib/hooks";
 import { t, currentLang } from "./lib/i18n";
 import { Login, Setup } from "./pages/Auth";
@@ -16,6 +17,7 @@ import { UserSettings } from "./pages/UserSettings";
 
 document.documentElement.lang = currentLang();
 
+const Reader = lazy(() => import("./pages/Reader").then((m) => ({ default: m.Reader })));
 const Player = lazy(() => import("./pages/Player").then((m) => ({ default: m.Player })));
 const AdminLayout = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminLayout })));
 const AdminDashboard = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminDashboard })));
@@ -81,12 +83,14 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
+        <AudioProvider>
         <BrowserRouter>
           <Suspense fallback={<Loading />}>
           <Routes>
             <Route path="/setup" element={<PublicOnly setup><Setup /></PublicOnly>} />
             <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
             <Route path="/play/:id" element={<Guard><Player /></Guard>} />
+            <Route path="/read/:id" element={<Guard><Reader /></Guard>} />
             <Route element={<Guard><Layout /></Guard>}>
               <Route index element={<Home />} />
               <Route path="library/:id" element={<Library />} />
@@ -104,6 +108,7 @@ createRoot(document.getElementById("root")!).render(
           </Routes>
           </Suspense>
         </BrowserRouter>
+        </AudioProvider>
       </ToastProvider>
     </QueryClientProvider>
   </StrictMode>,

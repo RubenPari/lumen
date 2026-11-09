@@ -54,6 +54,14 @@ Senza ffmpeg/ffprobe funziona solo la riproduzione diretta dei formati che il br
   istantaneo della web app via Server-Sent Events.
 - **Stato per utente**: posizione di ripresa, visto/non visto (anche per stagione o serie intera),
   preferiti, "Continua a guardare" e "Prossimi episodi" (stessa logica del `TVSeriesManager`).
+- **Musica**: artisti, album (anche multi-disco "CD 1/CD 2"), brani; tag ID3/MP4/FLAC/OGG e copertine incorporate
+  letti in Go puro; player audio persistente con coda, shuffle/repeat, controlli da tastiera/lock screen (Media Session);
+  transcodifica al volo in MP3 per i formati non supportati dal browser.
+- **Libri e fumetti**: EPUB (metadati OPF, copertina, serie Calibre/EPUB3), PDF, CBZ/CBR con lettore integrato
+  (temi chiaro/scuro/seppia, dimensione testo, doppia pagina, modalità manga) e posizione di lettura sincronizzata.
+- **Audiolibri**: cartelle di file audio o singoli file (m4b/mp3) con capitoli e ripresa dal punto esatto.
+- **Foto**: album per cartella, cronologia per mese con data di scatto EXIF, rotazione automatica, lightbox
+  con zoom/swipe e presentazione.
 - **Utenti** multipli con password PBKDF2-SHA512 (come Jellyfin), ruoli admin, sessioni via cookie.
 - **Dashboard admin**: statistiche, chi sta guardando cosa (direct/transcode), stato scansione,
   gestione librerie con selettore di cartelle, utenti, impostazioni.
@@ -75,7 +83,7 @@ Senza ffmpeg/ffprobe funziona solo la riproduzione diretta dei formati che il br
 
 | Lumen (Go)                 | Jellyfin (C#)                                                    |
 |----------------------------|------------------------------------------------------------------|
-| `internal/naming`          | `Emby.Naming` (regex identiche, valutate con `regexp2`; test portati da `Jellyfin.Naming.Tests`) |
+| `internal/naming`          | `Emby.Naming` (regex identiche, valutate con `regexp2`; test portati da `Jellyfin.Naming.Tests`, inclusi musica, libri e audiolibri) |
 | `internal/scanner`         | `Emby.Server.Implementations/Library/Resolvers`, `LibraryManager` |
 | `internal/metadata/nfo.go` | `MediaBrowser.XbmcMetadata`                                      |
 | `internal/metadata/images.go` | `MediaBrowser.LocalMetadata/Images/LocalImageProvider`        |
@@ -97,7 +105,9 @@ make test                                         # go vet + test + typecheck
 ## Limiti attuali
 
 - L'API non è compatibile con i client Jellyfin ufficiali (app TV/mobile): c'è solo la web app.
-- Solo film e serie TV (niente musica, libri, foto, Live TV).
+- Niente Live TV (in arrivo).
+- I formati `.mobi`/`.azw3`/`.fb2` sono catalogati ma solo scaricabili, non leggibili nel browser; le foto HEIC
+  si vedono solo nei browser che le supportano.
 - Le immagini disco `.iso` non sono supportate (le cartelle `VIDEO_TS`/`BDMV` sì).
 - Il monitoraggio in tempo reale usa inotify: su cartelle di rete (NFS/SMB) e su `/mnt/c` in WSL non riceve eventi,
   lì restano le scansioni periodiche.

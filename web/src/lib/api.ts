@@ -1,6 +1,6 @@
 import { t } from "./i18n";
 
-export type ItemType = "Movie" | "Series" | "Season" | "Episode";
+export type ItemType = "Movie" | "Series" | "Season" | "Episode" | "MusicArtist" | "MusicAlbum" | "Audio" | "PhotoAlbum" | "Photo" | "Book" | "AudioBook";
 
 export interface Person {
   name: string;
@@ -33,6 +33,7 @@ export interface UserData {
   playCount: number;
   favorite: boolean;
   lastPlayed?: number;
+  progressText?: string;
 }
 
 export interface Item {
@@ -94,7 +95,7 @@ export interface Item {
 export interface Library {
   id: string;
   name: string;
-  type: "movies" | "tvshows";
+  type: "movies" | "tvshows" | "music" | "photos" | "books";
   paths?: string[];
   createdAt: number;
   lastScan: number;

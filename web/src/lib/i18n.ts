@@ -185,6 +185,45 @@ const it: Record<string, string> = {
   "Detects new and removed files immediately (not available on network shares).": "Rileva subito i file aggiunti o rimossi (non funziona sulle cartelle di rete).",
 };
 
+Object.assign(it, {
+  "Add to queue": "Aggiungi alla coda",
+  "Album": "Album",
+  "Albums": "Album",
+  "Artist": "Artista",
+  "Artists": "Artisti",
+  "Audiobook": "Audiolibro",
+  "Audiobooks": "Audiolibri",
+  "Book": "Libro",
+  "Books": "Libri",
+  "Continue reading": "Continua a leggere",
+  "Disc {0}": "Disco {0}",
+  "Download": "Scarica",
+  "Last read": "Letti di recente",
+  "Listen": "Ascolta",
+  "Mark as read": "Segna come letto",
+  "Mark as unread": "Segna come non letto",
+  "More by {0}": "Altro di {0}",
+  "More in {0}": "Altri in {0}",
+  "Music": "Musica",
+  "Photos": "Foto",
+  "Queue": "Coda",
+  "Read": "Leggi",
+  "Right to left (manga)": "Da destra a sinistra (manga)",
+  "Show less": "Mostra meno",
+  "Show more": "Mostra altro",
+  "Slideshow": "Presentazione",
+  "Songs": "Brani",
+  "Text size": "Dimensione testo",
+  "This format can't be read in the browser.": "Questo formato non si può leggere nel browser.",
+  "Timeline": "Cronologia",
+  "Two pages": "Due pagine",
+  "Unread": "Da leggere",
+  "{0} albums": "{0} album",
+  "{0} chapters": "{0} capitoli",
+  "{0} photos": "{0} foto",
+  "{0} songs": "{0} brani",
+});
+
 const dicts: Record<string, Record<string, string>> = { it };
 
 let lang = (typeof navigator !== "undefined" ? navigator.language : "en").slice(0, 2);

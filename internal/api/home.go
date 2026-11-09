@@ -32,7 +32,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	resume, err := s.DB.QueryItems(`JOIN user_data ud ON ud.item_id=items.id AND ud.user_id=?
-		WHERE items.type IN ('Movie','Episode') AND ud.position>0 AND ud.played=0 ORDER BY ud.last_played DESC LIMIT 20`, u.ID)
+		WHERE items.type IN ('Movie','Episode','Book','AudioBook') AND ud.position>0 AND ud.played=0 ORDER BY ud.last_played DESC LIMIT 20`, u.ID)
 	if err != nil {
 		return err
 	}
@@ -54,9 +54,16 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) error {
 	}
 	for _, l := range libs {
 		var items []*db.Item
-		if l.Type == "tvshows" {
+		switch l.Type {
+		case "tvshows":
 			items, err = s.DB.QueryItems(`WHERE library_id=? AND type='Series' ORDER BY date_added DESC LIMIT 24`, l.ID)
-		} else {
+		case "music":
+			items, err = s.DB.QueryItems(`WHERE library_id=? AND type='MusicAlbum' ORDER BY date_added DESC LIMIT 24`, l.ID)
+		case "books":
+			items, err = s.DB.QueryItems(`WHERE library_id=? AND type IN ('Book','AudioBook') ORDER BY date_added DESC LIMIT 24`, l.ID)
+		case "photos":
+			items, err = s.DB.QueryItems(`WHERE library_id=? AND type='PhotoAlbum' ORDER BY date_added DESC LIMIT 24`, l.ID)
+		default:
 			items, err = s.DB.QueryItems(`WHERE library_id=? AND type='Movie' AND extra_type='' ORDER BY date_added DESC LIMIT 24`, l.ID)
 		}
 		if err != nil {

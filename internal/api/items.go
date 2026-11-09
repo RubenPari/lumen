@@ -62,9 +62,19 @@ func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 		if !u.IsAdmin {
 			it.Path = ""
 		}
+		if it.Type == db.TypeBook && it.Duration == 0 {
+			it.Duration = 100 // book progress is stored as a percentage
+		}
 		out[i] = &ItemDTO{Item: it, Images: imagesOf(it), UserData: ud[it.ID]}
-		if it.Type == db.TypeSeries || it.Type == db.TypeSeason {
+		switch it.Type {
+		case db.TypeSeries, db.TypeSeason:
 			folderIDs = append(folderIDs, it.ID)
+		case db.TypeMusicAlbum, db.TypeAudioBook:
+			_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE parent_id=? AND type='Audio'`, it.ID).Scan(&out[i].ChildCount)
+		case db.TypeMusicArtist:
+			_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE artist_id=? AND type='MusicAlbum'`, it.ID).Scan(&out[i].ChildCount)
+		case db.TypePhotoAlbum:
+			_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE parent_id=? AND type='Photo'`, it.ID).Scan(&out[i].ChildCount)
 		}
 		if it.SeriesID != "" {
 			parentIDs[it.SeriesID] = true
@@ -205,6 +215,10 @@ var sortColumns = map[string]string{
 	"random":     "RANDOM()",
 	"lastPlayed": "COALESCE(ud.last_played,0)",
 	"episode":    "COALESCE(i.season_number,0), COALESCE(i.episode_number,0), i.sort_name",
+	"track":      "COALESCE(i.disc_number,1), COALESCE(i.track_number,0), i.sort_name",
+	"taken":      "i.taken_at",
+	"artist":     "i.album_artist COLLATE NOCASE",
+	"series":     "i.album_artist COLLATE NOCASE, COALESCE(i.track_number,0)",
 }
 
 func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
@@ -225,7 +239,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
 	} else {
 		where = append(where, "i.type IN ('Movie','Series')")
 	}
-	for key, col := range map[string]string{"parentId": "i.parent_id", "seriesId": "i.series_id", "seasonId": "i.season_id"} {
+	for key, col := range map[string]string{"parentId": "i.parent_id", "seriesId": "i.series_id", "seasonId": "i.season_id", "albumId": "i.album_id", "artistId": "i.artist_id"} {
 		if v := q.Get(key); v != "" {
 			where = append(where, col+"=?")
 			args = append(args, v)
@@ -241,6 +255,10 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
 	}
 	if v := q.Get("person"); v != "" {
 		where = append(where, "EXISTS (SELECT 1 FROM json_each(i.people) WHERE json_extract(value,'$.name')=?)")
+		args = append(args, v)
+	}
+	if v := q.Get("bookSeries"); v != "" {
+		where = append(where, "i.album_artist=?")
 		args = append(args, v)
 	}
 	if v := qint(r, "year", 0); v > 0 {
@@ -286,7 +304,10 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
 	if strings.EqualFold(q.Get("order"), "desc") {
 		dir = "DESC"
 	}
-	if q.Get("sort") != "random" && q.Get("sort") != "episode" {
+	if v := q.Get("root"); v == "true" {
+		where = append(where, "i.parent_id IS NULL")
+	}
+	if q.Get("sort") != "random" && q.Get("sort") != "episode" && q.Get("sort") != "track" {
 		order = order + " " + dir + ", i.sort_name COLLATE NOCASE"
 	}
 	limit := qint(r, "limit", 100)
@@ -352,6 +373,14 @@ func (s *Server) children(w http.ResponseWriter, r *http.Request) error {
 		kids, err = s.DB.QueryItems(`WHERE parent_id=? AND type='Season' ORDER BY CASE WHEN season_number=0 THEN 9999 ELSE season_number END`, it.ID)
 	case db.TypeSeason:
 		kids, err = s.DB.QueryItems(`WHERE season_id=? AND type='Episode' ORDER BY COALESCE(episode_number,9999), premiere_date, sort_name`, it.ID)
+	case db.TypeMusicArtist:
+		kids, err = s.DB.QueryItems(`WHERE artist_id=? AND type='MusicAlbum' ORDER BY year DESC, sort_name`, it.ID)
+	case db.TypeMusicAlbum:
+		kids, err = s.DB.QueryItems(`WHERE album_id=? AND type='Audio' ORDER BY COALESCE(disc_number,1), COALESCE(track_number,9999), sort_name`, it.ID)
+	case db.TypeAudioBook:
+		kids, err = s.DB.QueryItems(`WHERE parent_id=? AND type='Audio' ORDER BY COALESCE(track_number,9999), sort_name`, it.ID)
+	case db.TypePhotoAlbum:
+		kids, err = s.DB.QueryItems(`WHERE parent_id=? AND type IN ('PhotoAlbum','Photo') ORDER BY CASE type WHEN 'PhotoAlbum' THEN 0 ELSE 1 END, taken_at, sort_name`, it.ID)
 	}
 	if err != nil {
 		return err
@@ -499,9 +528,11 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) error {
 		return ok(w, map[string]any{"items": []any{}, "people": []any{}})
 	}
 	like := "%" + q + "%"
-	items, err := s.DB.QueryItems(`WHERE extra_type='' AND type IN ('Movie','Series','Episode') AND (name LIKE ? OR original_title LIKE ?)
-		ORDER BY CASE type WHEN 'Movie' THEN 0 WHEN 'Series' THEN 0 ELSE 1 END,
-		CASE WHEN name LIKE ? THEN 0 ELSE 1 END, community_rating DESC LIMIT 60`, like, like, q+"%")
+	items, err := s.DB.QueryItems(`WHERE extra_type='' AND type IN ('Movie','Series','Episode','MusicArtist','MusicAlbum','Audio','Book','AudioBook')
+		AND (name LIKE ? OR original_title LIKE ? OR (type IN ('Book','AudioBook') AND artists LIKE ?))
+		AND NOT (type='Audio' AND parent_id IN (SELECT id FROM items WHERE type='AudioBook'))
+		ORDER BY CASE type WHEN 'Movie' THEN 0 WHEN 'Series' THEN 0 WHEN 'MusicArtist' THEN 1 WHEN 'MusicAlbum' THEN 1 WHEN 'Book' THEN 1 WHEN 'AudioBook' THEN 1 ELSE 2 END,
+		CASE WHEN name LIKE ? THEN 0 ELSE 1 END, community_rating DESC LIMIT 80`, like, like, like, q+"%")
 	if err != nil {
 		return err
 	}

@@ -181,6 +181,11 @@ func (s *Server) Handler() http.Handler {
 	auth("GET /api/hls/{sid}/{file}", s.hlsFile)
 	auth("DELETE /api/hls/{sid}", s.stopHLS)
 	auth("GET /api/items/{id}/subtitles/{idx}", s.subtitle)
+	auth("GET /api/items/{id}/file", s.fileItem)
+	auth("GET /api/items/{id}/audio", s.transcodeAudio)
+	auth("GET /api/items/{id}/pages", s.pages)
+	auth("GET /api/items/{id}/pages/{n}", s.page)
+	auth("PUT /api/items/{id}/reading", s.reading)
 
 	// Administration
 	admin("POST /api/libraries", s.createLibrary)

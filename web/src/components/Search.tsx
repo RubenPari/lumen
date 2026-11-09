@@ -41,19 +41,36 @@ export function SearchPalette({ open, onClose }: { open: boolean; onClose: () =>
 
   const groups = useMemo(() => {
     if (!data || !dq) return [];
-    const typeName: Record<string, string> = { Movie: t("Movies"), Series: t("Shows"), Episode: t("Episodes") };
+    const typeName: Record<string, string> = {
+      Movie: t("Movies"),
+      Series: t("Shows"),
+      Episode: t("Episodes"),
+      MusicArtist: t("Artists"),
+      MusicAlbum: t("Albums"),
+      Audio: t("Songs"),
+      Book: t("Books"),
+      AudioBook: t("Audiobooks"),
+    };
     const g: { label: string; entries: Entry[] }[] = [];
-    for (const type of ["Movie", "Series", "Episode"]) {
+    for (const type of ["Movie", "Series", "MusicArtist", "MusicAlbum", "Book", "AudioBook", "Episode", "Audio"]) {
       const items = data.items.filter((i) => i.type === type).slice(0, type === "Episode" ? 6 : 8);
       if (items.length)
         g.push({
           label: typeName[type],
           entries: items.map((i) => ({
             key: i.id,
-            href: itemLink(i),
+            href: i.type === "Audio" && i.albumId ? `/item/${i.albumId}` : itemLink(i),
             title: i.name,
-            sub: i.type === "Episode" ? `${i.seriesName} · ${episodeLabel(i)}` : [i.year, i.genres?.slice(0, 2).join(", ")].filter(Boolean).join(" · "),
-            img: i.type === "Episode" ? landscapeImage(i, 200) : posterImage(i, 120),
+            sub:
+              i.type === "Episode"
+                ? `${i.seriesName} · ${episodeLabel(i)}`
+                : i.type === "Audio" || i.type === "MusicAlbum"
+                  ? [i.albumArtist ?? i.artists?.join(", "), i.year].filter(Boolean).join(" · ")
+                  : i.type === "Book" || i.type === "AudioBook"
+                    ? [i.artists?.join(", "), i.year].filter(Boolean).join(" · ")
+                    : [i.year, i.genres?.slice(0, 2).join(", ")].filter(Boolean).join(" · "),
+            img: i.type === "Episode" ? landscapeImage(i, 200) : i.type === "Audio" && i.albumId ? `/api/items/${i.albumId}/images/primary?w=120` : posterImage(i, 120),
+            round: i.type === "MusicArtist",
             landscape: i.type === "Episode",
           })),
         });

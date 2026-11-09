@@ -16,6 +16,14 @@ const (
 	TypeSeries  = "Series"
 	TypeSeason  = "Season"
 	TypeEpisode = "Episode"
+
+	TypeMusicArtist = "MusicArtist"
+	TypeMusicAlbum  = "MusicAlbum"
+	TypeAudio       = "Audio"
+	TypePhotoAlbum  = "PhotoAlbum"
+	TypePhoto       = "Photo"
+	TypeBook        = "Book"
+	TypeAudioBook   = "AudioBook"
 )
 
 // Person is a cast or crew member.
@@ -366,7 +374,7 @@ type Library struct {
 // ListLibraries returns all libraries with item counts.
 func (d *DB) ListLibraries() ([]*Library, error) {
 	rows, err := d.Query(`SELECT l.id,l.name,l.type,l.paths,l.created_at,l.last_scan,l.realtime,
-		(SELECT COUNT(*) FROM items i WHERE i.library_id=l.id AND i.type IN ('Movie','Series','MusicAlbum','PhotoAlbum','Book','AudioBook') AND i.extra_type='')
+		(SELECT COUNT(*) FROM items i WHERE i.library_id=l.id AND i.type IN ('Movie','Series','MusicAlbum','Photo','Book','AudioBook') AND i.extra_type='')
 		FROM libraries l ORDER BY l.created_at`)
 	if err != nil {
 		return nil, err
@@ -414,6 +422,8 @@ type UserData struct {
 	PlayCount  int     `json:"playCount"`
 	Favorite   bool    `json:"favorite"`
 	LastPlayed int64   `json:"lastPlayed,omitempty"`
+	// ProgressText stores a reading location (EPUB CFI or page number).
+	ProgressText string `json:"progressText,omitempty"`
 }
 
 // GetUserData returns user data for many items at once.
@@ -429,7 +439,7 @@ func (d *DB) GetUserData(userID string, ids []string) (map[string]UserData, erro
 		for _, id := range chunk {
 			args = append(args, id)
 		}
-		rows, err := d.Query(`SELECT item_id,position,played,play_count,favorite,last_played FROM user_data WHERE user_id=? AND item_id IN (`+
+		rows, err := d.Query(`SELECT item_id,position,played,play_count,favorite,last_played,progress_text FROM user_data WHERE user_id=? AND item_id IN (`+
 			strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")+`)`, args...)
 		if err != nil {
 			return nil, err
@@ -437,7 +447,7 @@ func (d *DB) GetUserData(userID string, ids []string) (map[string]UserData, erro
 		for rows.Next() {
 			var id string
 			var u UserData
-			if err := rows.Scan(&id, &u.Position, &u.Played, &u.PlayCount, &u.Favorite, &u.LastPlayed); err != nil {
+			if err := rows.Scan(&id, &u.Position, &u.Played, &u.PlayCount, &u.Favorite, &u.LastPlayed, &u.ProgressText); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -450,10 +460,10 @@ func (d *DB) GetUserData(userID string, ids []string) (map[string]UserData, erro
 
 // SaveUserData upserts user data for an item.
 func (d *DB) SaveUserData(userID, itemID string, u UserData) error {
-	_, err := d.Exec(`INSERT INTO user_data(user_id,item_id,position,played,play_count,favorite,last_played) VALUES(?,?,?,?,?,?,?)
+	_, err := d.Exec(`INSERT INTO user_data(user_id,item_id,position,played,play_count,favorite,last_played,progress_text) VALUES(?,?,?,?,?,?,?,?)
 		ON CONFLICT(user_id,item_id) DO UPDATE SET position=excluded.position, played=excluded.played, play_count=excluded.play_count,
-		favorite=excluded.favorite, last_played=excluded.last_played`,
-		userID, itemID, u.Position, u.Played, u.PlayCount, u.Favorite, u.LastPlayed)
+		favorite=excluded.favorite, last_played=excluded.last_played, progress_text=excluded.progress_text`,
+		userID, itemID, u.Position, u.Played, u.PlayCount, u.Favorite, u.LastPlayed, u.ProgressText)
 	return err
 }
 

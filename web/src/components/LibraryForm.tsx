@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Film, FolderPlus, Trash2, Tv } from "lucide-react";
+import { BookOpen, Film, FolderPlus, Images, Music, Trash2, Tv } from "lucide-react";
 import { useState } from "react";
 import { t } from "../lib/i18n";
 import { FolderPicker } from "./FolderPicker";
@@ -21,11 +21,14 @@ export function LibraryForm({ value, onChange, lockType }: { value: LibraryDraft
       {!lockType && (
         <div>
           <div className="mb-2 text-[13px] font-medium text-ink-300">{t("Content type")}</div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {(
               [
                 ["movies", t("Movies"), Film],
                 ["tvshows", t("Shows"), Tv],
+                ["music", t("Music"), Music],
+                ["books", t("Books"), BookOpen],
+                ["photos", t("Photos"), Images],
               ] as const
             ).map(([type, label, Icon]) => (
               <button

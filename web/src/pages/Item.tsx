@@ -9,7 +9,10 @@ import { api, backdropImage, landscapeImage, logoImage, posterImage, type Item, 
 import { channelsLabel, endsAt, episodeLabel, formatDuration, progressPct, resolutionLabel } from "../lib/format";
 import { useItem, useMe, useUserDataActions } from "../lib/hooks";
 import { t } from "../lib/i18n";
+import { AudioBookView, BookView } from "./Books";
 import { MetaLine } from "./Home";
+import { AlbumView, ArtistView } from "./Music";
+import { PhotoAlbumView } from "./Photos";
 
 function TechBadges({ item }: { item: Item }) {
   const streams = item.media?.streams ?? [];
@@ -311,6 +314,11 @@ export function ItemPage() {
       </div>
     );
   if (error || !item) return <EmptyState title={t("Not found")} />;
+  if (item.type === "MusicAlbum") return <AlbumView album={item} />;
+  if (item.type === "MusicArtist") return <ArtistView artist={item} />;
+  if (item.type === "Book") return <BookView book={item} />;
+  if (item.type === "AudioBook") return <AudioBookView book={item} />;
+  if (item.type === "PhotoAlbum") return <PhotoAlbumView album={item} />;
 
   const playTarget = item.type === "Series" ? next : item;
   const resumePct = playTarget ? progressPct(playTarget) : 0;
