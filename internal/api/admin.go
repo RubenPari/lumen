@@ -97,10 +97,7 @@ func (s *Server) updateLibrary(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) error {
 	id := r.PathValue("id")
-	if _, err := s.DB.Exec(`DELETE FROM items WHERE library_id=?`, id); err != nil {
-		return err
-	}
-	if _, err := s.DB.Exec(`DELETE FROM libraries WHERE id=?`, id); err != nil {
+	if err := s.DB.DeleteLibrary(id); err != nil {
 		return err
 	}
 	s.librariesChanged()
@@ -170,22 +167,10 @@ func (s *Server) browseFS(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
-	counts := map[string]int{}
-	rows, err := s.DB.Query(`SELECT type, COUNT(*) FROM items WHERE extra_type='' GROUP BY type`)
+	totals, err := s.DB.MediaTotals()
 	if err != nil {
 		return err
 	}
-	for rows.Next() {
-		var t string
-		var n int
-		_ = rows.Scan(&t, &n)
-		counts[t] = n
-	}
-	rows.Close()
-	var size int64
-	_ = s.DB.QueryRow(`SELECT COALESCE(SUM(size),0) FROM items WHERE is_folder=0`).Scan(&size)
-	var duration float64
-	_ = s.DB.QueryRow(`SELECT COALESCE(SUM(duration),0) FROM items WHERE type IN ('Movie','Episode') AND extra_type=''`).Scan(&duration)
 	playing := []*NowPlaying{}
 	s.playing.Range(func(_, v any) bool {
 		np := v.(*NowPlaying)
@@ -205,9 +190,9 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	return ok(w, map[string]any{
-		"counts":     counts,
-		"totalSize":  size,
-		"totalHours": duration / 3600,
+		"counts":     totals.Counts,
+		"totalSize":  totals.Size,
+		"totalHours": totals.Duration / 3600,
 		"playing":    playing,
 		"transcodes": s.Streams.Count(),
 		"scan":       s.Scanner.Status(),
@@ -280,16 +265,14 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	u := &db.User{ID: db.NewID(), Name: strings.TrimSpace(body.Name), PasswordHash: hash, IsAdmin: body.IsAdmin, CreatedAt: db.Now(), HasPassword: hash != ""}
-	if _, err := s.DB.Exec(`INSERT INTO users(id,name,password_hash,is_admin,created_at) VALUES(?,?,?,?,?)`, u.ID, u.Name, u.PasswordHash, u.IsAdmin, u.CreatedAt); err != nil {
+	if err := s.DB.CreateUser(u); err != nil {
 		return err
 	}
 	return ok(w, u)
 }
 
-func (s *Server) adminCount() int {
-	var n int
-	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE is_admin=1`).Scan(&n)
-	return n
+func (s *Server) adminCount() (int, error) {
+	return s.DB.CountAdmins()
 }
 
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) error {
@@ -312,8 +295,14 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) error {
 		u.Name = strings.TrimSpace(*body.Name)
 	}
 	if body.IsAdmin != nil {
-		if !*body.IsAdmin && u.IsAdmin && s.adminCount() <= 1 {
-			return errf(http.StatusBadRequest, "at least one administrator is required")
+		if !*body.IsAdmin && u.IsAdmin {
+			n, err := s.adminCount()
+			if err != nil {
+				return err
+			}
+			if n <= 1 {
+				return errf(http.StatusBadRequest, "at least one administrator is required")
+			}
 		}
 		u.IsAdmin = *body.IsAdmin
 	}
@@ -322,7 +311,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	if _, err := s.DB.Exec(`UPDATE users SET name=?, password_hash=?, is_admin=? WHERE id=?`, u.Name, u.PasswordHash, u.IsAdmin, u.ID); err != nil {
+	if err := s.DB.UpdateUser(u); err != nil {
 		return err
 	}
 	u.HasPassword = u.PasswordHash != ""
@@ -337,10 +326,16 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) error {
 	if u.ID == userFrom(r).ID {
 		return errf(http.StatusBadRequest, "you cannot delete yourself")
 	}
-	if u.IsAdmin && s.adminCount() <= 1 {
-		return errf(http.StatusBadRequest, "at least one administrator is required")
+	if u.IsAdmin {
+		n, err := s.adminCount()
+		if err != nil {
+			return err
+		}
+		if n <= 1 {
+			return errf(http.StatusBadRequest, "at least one administrator is required")
+		}
 	}
-	if _, err := s.DB.Exec(`DELETE FROM users WHERE id=?`, u.ID); err != nil {
+	if err := s.DB.DeleteUser(u.ID); err != nil {
 		return err
 	}
 	return ok(w, map[string]bool{"ok": true})
@@ -403,14 +398,14 @@ func (s *Server) editItem(w http.ResponseWriter, r *http.Request) error {
 	}
 	locked := it.MetadataLocked
 	// Upsert respects the old lock state; temporarily write with lock off.
-	if _, err := s.DB.Exec(`UPDATE items SET metadata_locked=0 WHERE id=?`, it.ID); err != nil {
+	if err := s.DB.SetMetadataLocked(it.ID, false); err != nil {
 		return err
 	}
 	it.MetadataLocked = false
 	if err := s.DB.UpsertItem(it); err != nil {
 		return err
 	}
-	if _, err := s.DB.Exec(`UPDATE items SET metadata_locked=? WHERE id=?`, locked, it.ID); err != nil {
+	if err := s.DB.SetMetadataLocked(it.ID, locked); err != nil {
 		return err
 	}
 	if tmdbChanged && !locked {

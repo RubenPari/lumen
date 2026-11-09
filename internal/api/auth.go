@@ -73,13 +73,12 @@ func (s *Server) userForToken(token string) (*db.User, error) {
 	if token == "" {
 		return nil, db.ErrNotFound
 	}
-	var uid string
-	var last int64
-	if err := s.DB.QueryRow(`SELECT user_id,last_seen FROM sessions WHERE token=?`, token).Scan(&uid, &last); err != nil {
-		return nil, db.ErrNotFound
+	uid, last, err := s.DB.LookupSession(token)
+	if err != nil {
+		return nil, err
 	}
 	if db.Now()-last > 300 {
-		_, _ = s.DB.Exec(`UPDATE sessions SET last_seen=? WHERE token=?`, db.Now(), token)
+		_ = s.DB.TouchSession(token)
 	}
 	return s.DB.GetUser(uid)
 }
@@ -109,7 +108,7 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, u *db.User
 	if len(device) > 200 {
 		device = device[:200]
 	}
-	if _, err := s.DB.Exec(`INSERT INTO sessions(token,user_id,device,created_at,last_seen) VALUES(?,?,?,?,?)`, token, u.ID, device, db.Now(), db.Now()); err != nil {
+	if err := s.DB.CreateSession(db.Session{Token: token, UserID: u.ID, Device: device}); err != nil {
 		return "", err
 	}
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
@@ -144,7 +143,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	u := &db.User{ID: db.NewID(), Name: strings.TrimSpace(c.Username), PasswordHash: hash, IsAdmin: true, CreatedAt: db.Now()}
-	if _, err := s.DB.Exec(`INSERT INTO users(id,name,password_hash,is_admin,created_at) VALUES(?,?,?,?,?)`, u.ID, u.Name, u.PasswordHash, true, u.CreatedAt); err != nil {
+	if err := s.DB.CreateUser(u); err != nil {
 		return err
 	}
 	if c.ServerName != "" {
@@ -196,7 +195,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
-	_, _ = s.DB.Exec(`DELETE FROM sessions WHERE token=?`, tokenFrom(r))
+	_ = s.DB.DeleteSession(tokenFrom(r))
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1})
 	s.playing.Delete(userFrom(r).ID)
 	return ok(w, map[string]bool{"ok": true})
@@ -222,8 +221,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.Exec(`UPDATE users SET password_hash=? WHERE id=?`, hash, u.ID)
-	if err != nil {
+	if err := s.DB.SetPassword(u.ID, hash); err != nil {
 		return err
 	}
 	return ok(w, map[string]bool{"ok": true})

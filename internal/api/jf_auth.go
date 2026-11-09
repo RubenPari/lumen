@@ -244,8 +244,7 @@ func (s *Server) jfAuthenticate(w http.ResponseWriter, r *http.Request) error {
 	if device == "" {
 		device = deviceName(r.UserAgent())
 	}
-	if _, err := s.DB.Exec(`INSERT INTO sessions(token,user_id,device,created_at,last_seen,client,device_id,app_version) VALUES(?,?,?,?,?,?,?,?)`,
-		token, u.ID, device, db.Now(), db.Now(), a.Client, a.DeviceID, a.Version); err != nil {
+	if err := s.DB.CreateSession(db.Session{Token: token, UserID: u.ID, Device: device, Client: a.Client, DeviceID: a.DeviceID, Version: a.Version}); err != nil {
 		return err
 	}
 	return jfJSON(w, map[string]any{
@@ -297,7 +296,7 @@ func (s *Server) jfSessions(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) jfLogout(w http.ResponseWriter, r *http.Request) error {
-	_, _ = s.DB.Exec(`DELETE FROM sessions WHERE token=?`, parseJFAuth(r).Token)
+	_ = s.DB.DeleteSession(parseJFAuth(r).Token)
 	return noContent(w)
 }
 

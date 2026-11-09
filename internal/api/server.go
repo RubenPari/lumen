@@ -326,7 +326,10 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) liveTVChannelCount() int {
-	var n int
-	_ = s.DB.QueryRow(`SELECT COUNT(*) FROM livetv_channels`).Scan(&n)
+	n, err := s.DB.CountLiveChannels()
+	if err != nil {
+		s.Log.Error("live tv count", "err", err)
+		return 0
+	}
 	return n
 }
