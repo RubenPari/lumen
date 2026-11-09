@@ -16,8 +16,10 @@ import (
 
 	"github.com/dlclark/regexp2"
 	"github.com/rubenpari/lumen/internal/db"
+	"github.com/rubenpari/lumen/internal/events"
 	"github.com/rubenpari/lumen/internal/metadata"
 	"github.com/rubenpari/lumen/internal/naming"
+	"github.com/rubenpari/lumen/internal/stream"
 )
 
 // Status is the progress of the current scan.
@@ -39,9 +41,12 @@ type Scanner struct {
 	TMDB    func() *metadata.TMDB // nil result when not configured
 	Log     *slog.Logger
 
-	mu     sync.Mutex
-	status Status
-	run    sync.Mutex
+	Events *events.Hub
+
+	mu       sync.Mutex
+	status   Status
+	lastEmit time.Time
+	run      sync.Mutex
 	// OnChange is invoked after a library scan completes.
 	OnChange func()
 }
@@ -56,7 +61,15 @@ func (s *Scanner) Status() Status {
 func (s *Scanner) update(f func(*Status)) {
 	s.mu.Lock()
 	f(&s.status)
+	st := s.status
+	emit := time.Since(s.lastEmit) > 400*time.Millisecond || !st.Running
+	if emit {
+		s.lastEmit = time.Now()
+	}
 	s.mu.Unlock()
+	if emit {
+		s.Events.Publish(events.Event{Type: "scan.progress", Data: st})
+	}
 }
 
 // ErrBusy is returned when a scan is already running.
@@ -168,56 +181,134 @@ type libScan struct {
 	count    int
 }
 
+func (s *Scanner) newLibScan(ctx context.Context, lib *db.Library, where string, args ...any) (*libScan, error) {
+	items, err := s.DB.QueryItems(`WHERE library_id=? `+where, append([]any{lib.ID}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	ls := &libScan{s: s, lib: lib, existing: map[string]*db.Item{}, seen: map[string]bool{}, now: db.Now(), ctx: ctx}
+	for _, it := range items {
+		ls.existing[it.ID] = it
+	}
+	return ls, nil
+}
+
+// scanRoot scans a whole library folder.
+func (ls *libScan) scanRoot(root string) {
+	switch ls.lib.Type {
+	case "tvshows":
+		ls.scanShowsRoot(root)
+	default:
+		ls.scanMovieDir(root, root)
+	}
+}
+
+// scanUnit rescans a single top-level unit (movie folder, series folder...).
+func (ls *libScan) scanUnit(unit, root string) {
+	fi, err := os.Stat(unit)
+	if err != nil {
+		return // deleted: its items are removed by the caller
+	}
+	switch ls.lib.Type {
+	case "tvshows":
+		if fi.IsDir() && unit != root {
+			ls.scanSeries(unit, root)
+		} else {
+			ls.scanShowsRoot(root)
+		}
+	default:
+		if fi.IsDir() {
+			ls.scanMovieDir(unit, root)
+		} else {
+			ls.scanMovieDir(filepath.Dir(unit), root)
+		}
+	}
+}
+
+// removeUnseen deletes items that were expected but not found.
+func (ls *libScan) removeUnseen() int {
+	removed := 0
+	for id := range ls.existing {
+		if !ls.seen[id] {
+			if _, err := ls.s.DB.Exec(`DELETE FROM items WHERE id=?`, id); err == nil {
+				removed++
+			}
+		}
+	}
+	if removed > 0 {
+		ls.s.Log.Info("removed items", "library", ls.lib.Name, "count", removed)
+	}
+	return removed
+}
+
 func (s *Scanner) scanLibrary(ctx context.Context, lib *db.Library) error {
 	s.Log.Info("scanning library", "name", lib.Name, "type", lib.Type)
 	s.update(func(st *Status) {
 		st.Running, st.Library, st.Phase, st.Current, st.Total, st.Message = true, lib.Name, "files", 0, 0, ""
 	})
-	items, err := s.DB.QueryItems(`WHERE library_id=?`, lib.ID)
+	ls, err := s.newLibScan(ctx, lib, "")
 	if err != nil {
 		return err
-	}
-	ls := &libScan{s: s, lib: lib, existing: map[string]*db.Item{}, seen: map[string]bool{}, now: db.Now(), ctx: ctx}
-	for _, it := range items {
-		ls.existing[it.ID] = it
 	}
 	for _, root := range lib.Paths {
 		if _, err := os.Stat(root); err != nil {
 			s.Log.Warn("library path unavailable", "path", root, "err", err)
 			// Keep items of an unavailable root (e.g. unmounted disk).
 			for id, it := range ls.existing {
-				if strings.HasPrefix(it.Path, root) {
+				if under(it.Path, root) {
 					ls.seen[id] = true
 				}
 			}
 			continue
 		}
-		switch lib.Type {
-		case "tvshows":
-			ls.scanShowsRoot(root)
-		default:
-			ls.scanMovieDir(root, root)
-		}
+		ls.scanRoot(root)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 	}
-	// Remove vanished items.
-	var removed int
-	for id := range ls.existing {
-		if !ls.seen[id] {
-			if _, err := s.DB.Exec(`DELETE FROM items WHERE id=?`, id); err == nil {
-				removed++
-			}
-		}
-	}
-	if removed > 0 {
-		s.Log.Info("removed items", "count", removed)
-	}
+	ls.removeUnseen()
 	lib.LastScan = db.Now()
 	_ = s.DB.SaveLibrary(lib)
 	if t := s.TMDB(); t != nil {
 		s.fetchRemote(ctx, lib, t)
+	}
+	return nil
+}
+
+// under reports whether path is root or inside root.
+func under(path, root string) bool {
+	return path == root || strings.HasPrefix(path, strings.TrimSuffix(root, string(filepath.Separator))+string(filepath.Separator))
+}
+
+// ScanPaths rescans only the given units of a library (used by the watcher).
+// Units must be absolute paths inside one of the library roots.
+func (s *Scanner) ScanPaths(ctx context.Context, lib *db.Library, units []string) error {
+	s.run.Lock()
+	defer s.run.Unlock()
+	for _, unit := range units {
+		root := ""
+		for _, r := range lib.Paths {
+			if under(unit, r) {
+				root = r
+			}
+		}
+		if root == "" {
+			continue
+		}
+		like := strings.ReplaceAll(strings.ReplaceAll(unit, "%", "\\%"), "_", "\\_") + string(filepath.Separator) + "%"
+		ls, err := s.newLibScan(ctx, lib, `AND (path=? OR path LIKE ? ESCAPE '\')`, unit, like)
+		if err != nil {
+			return err
+		}
+		s.Log.Info("rescanning", "library", lib.Name, "path", unit)
+		ls.scanUnit(unit, root)
+		ls.removeUnseen()
+	}
+	if t := s.TMDB(); t != nil {
+		s.fetchRemote(ctx, lib, t)
+	}
+	if s.OnChange != nil {
+		s.OnChange()
 	}
 	return nil
 }
@@ -321,8 +412,13 @@ func (ls *libScan) scanMovieDir(dir, root string) {
 	if ls.ctx.Err() != nil || ls.isExtrasDir(dir, root) {
 		return
 	}
+	if dir != root {
+		if disc := stream.DiscType(dir); disc != "" {
+			ls.buildDiscMovie(dir, root, disc)
+			return
+		}
+	}
 	l := listDir(dir)
-	// Disc folders (DVD/Blu-ray structure) are not supported for playback yet.
 	var main []string
 	var extras []string
 	for _, v := range l.videos {
@@ -397,7 +493,7 @@ func (ls *libScan) probe(it *db.Item) {
 	if it.Media.Probed || ls.s.FFprobe == "" || strings.EqualFold(filepath.Ext(it.Path), ".strm") {
 		return
 	}
-	mi, dur, err := metadata.Probe(ls.ctx, ls.s.FFprobe, it.Path)
+	mi, dur, err := metadata.Probe(ls.ctx, ls.s.FFprobe, stream.InputFor(it))
 	if err != nil {
 		ls.s.Log.Warn("ffprobe failed", "path", it.Path, "err", err)
 		return
@@ -518,6 +614,28 @@ func (ls *libScan) buildMovie(file string, info *naming.VideoFileInfo, ownsFolde
 		ls.s.Log.Error("save movie", "path", file, "err", err)
 	}
 	return it
+}
+
+// buildDiscMovie adds a DVD/Blu-ray folder as a movie (played through ffmpeg).
+func (ls *libScan) buildDiscMovie(dir, root, disc string) {
+	it, old := ls.base(db.TypeMovie, dir)
+	it.DiscType, it.Container = disc, disc
+	if old != nil && old.Media.Probed && old.MTime == it.MTime {
+		it.Media, it.Duration = old.Media, old.Duration
+	} else {
+		it.Media = db.MediaInfo{}
+	}
+	it.Size = stream.DiscSize(it)
+	info := naming.ResolveVideo(dir, true, true, root)
+	it.Name, it.Year = displayName(info.Name), info.Year
+	hasNFO := applyNFO(it, filepath.Join(dir, "movie.nfo"), filepath.Join(dir, "VIDEO_TS", "VIDEO_TS.nfo"))
+	mergeRemote(it, old, hasNFO)
+	setImages(it, metadata.FindFolderImages(dir, "movie"))
+	ls.probe(it)
+	ls.progress(it.Name)
+	if err := ls.s.DB.UpsertItem(it); err != nil {
+		ls.s.Log.Error("save disc", "path", dir, "err", err)
+	}
 }
 
 func (ls *libScan) buildExtra(parent *db.Item, file, kind string) {

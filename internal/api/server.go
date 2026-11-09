@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rubenpari/lumen/internal/db"
+	"github.com/rubenpari/lumen/internal/events"
 	"github.com/rubenpari/lumen/internal/metadata"
 	"github.com/rubenpari/lumen/internal/scanner"
 	"github.com/rubenpari/lumen/internal/stream"
@@ -34,6 +36,8 @@ type Server struct {
 	CacheDir  string
 	Log       *slog.Logger
 	Web       fs.FS // built web client (may be nil)
+	Events    *events.Hub
+	Watcher   interface{ Sync() } // realtime library monitor (may be nil)
 	startedAt time.Time
 
 	playing sync.Map // userID -> *NowPlaying
@@ -148,6 +152,7 @@ func (s *Server) Handler() http.Handler {
 	pub("POST /api/auth/login", s.login)
 	auth("POST /api/auth/logout", s.logout)
 	auth("GET /api/me", s.me)
+	auth("GET /api/events", s.eventStream)
 	auth("POST /api/me/password", s.changePassword)
 
 	// Browsing
@@ -249,4 +254,49 @@ func (s *Server) systemInfo(w http.ResponseWriter, r *http.Request) error {
 		"setupRequired": s.DB.CountUsers() == 0,
 		"ffmpeg":        s.FFmpeg != "",
 	})
+}
+
+// librariesChanged re-syncs the watcher and notifies clients.
+func (s *Server) librariesChanged() {
+	if s.Watcher != nil {
+		s.Watcher.Sync()
+	}
+	s.Events.Publish(events.Event{Type: "library.changed"})
+}
+
+// eventStream pushes server events to the web client (Server-Sent Events).
+func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) error {
+	fl, okf := w.(http.Flusher)
+	if !okf {
+		return errf(http.StatusInternalServerError, "streaming unsupported")
+	}
+	u := userFrom(r)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	ch, cancel := s.Events.Subscribe()
+	defer cancel()
+	fmt.Fprint(w, "retry: 3000\n\n")
+	fl.Flush()
+	ping := time.NewTicker(25 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return nil
+		case <-ping.C:
+			fmt.Fprint(w, ": ping\n\n")
+			fl.Flush()
+		case e, open := <-ch:
+			if !open {
+				return nil
+			}
+			if e.User != "" && e.User != u.ID {
+				continue
+			}
+			b, _ := json.Marshal(e)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			fl.Flush()
+		}
+	}
 }

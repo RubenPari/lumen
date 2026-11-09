@@ -118,6 +118,9 @@ func Open(path string) (*DB, error) {
 	if _, err := sdb.Exec(schema); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrate(sdb); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &DB{sdb}, nil
 }
 
@@ -151,4 +154,48 @@ func (d *DB) GetSetting(key, def string) string {
 func (d *DB) SetSetting(key, value string) error {
 	_, err := d.Exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
 	return err
+}
+
+// migrations are applied in order; PRAGMA user_version records the last one.
+var migrations = []string{
+	// 1: music, photos, discs, reading progress, realtime watching.
+	`ALTER TABLE items ADD COLUMN album_id TEXT;
+	ALTER TABLE items ADD COLUMN artist_id TEXT;
+	ALTER TABLE items ADD COLUMN artists TEXT NOT NULL DEFAULT '[]';
+	ALTER TABLE items ADD COLUMN album_artist TEXT NOT NULL DEFAULT '';
+	ALTER TABLE items ADD COLUMN track_number INTEGER;
+	ALTER TABLE items ADD COLUMN disc_number INTEGER;
+	ALTER TABLE items ADD COLUMN taken_at INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE items ADD COLUMN width INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE items ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE items ADD COLUMN disc_type TEXT NOT NULL DEFAULT '';
+	CREATE INDEX IF NOT EXISTS idx_items_album ON items(album_id);
+	CREATE INDEX IF NOT EXISTS idx_items_artist ON items(artist_id);
+	ALTER TABLE user_data ADD COLUMN progress_text TEXT NOT NULL DEFAULT '';
+	ALTER TABLE libraries ADD COLUMN realtime INTEGER NOT NULL DEFAULT 1;`,
+}
+
+func migrate(d *sql.DB) error {
+	var version int
+	if err := d.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	for i := version; i < len(migrations); i++ {
+		tx, err := d.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(migrations[i]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("step %d: %w", i+1, err)
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version=%d`, i+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

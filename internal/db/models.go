@@ -121,12 +121,24 @@ type Item struct {
 	MetadataFetched int64         `json:"-"`
 	DateAdded       int64         `json:"dateAdded"`
 	DateUpdated     int64         `json:"dateUpdated"`
+	// Music / photos / discs
+	AlbumID     string   `json:"albumId,omitempty"`
+	ArtistID    string   `json:"artistId,omitempty"`
+	Artists     []string `json:"artists,omitempty"`
+	AlbumArtist string   `json:"albumArtist,omitempty"`
+	TrackNumber *int     `json:"trackNumber,omitempty"`
+	DiscNumber  *int     `json:"discNumber,omitempty"`
+	TakenAt     int64    `json:"takenAt,omitempty"`
+	Width       int      `json:"width,omitempty"`
+	Height      int      `json:"height,omitempty"`
+	DiscType    string   `json:"discType,omitempty"` // dvd, bluray
 }
 
 var itemColumns = []string{"id", "library_id", "type", "parent_id", "series_id", "season_id", "name", "original_title", "sort_name",
 	"path", "is_folder", "year", "overview", "tagline", "premiere_date", "end_date", "status", "community_rating", "official_rating", "duration",
 	"season_number", "episode_number", "episode_end", "container", "size", "mtime", "genres", "studios", "people", "tmdb_id", "imdb_id",
-	"img_primary", "img_backdrop", "img_logo", "img_thumb", "media", "subtitles", "extra_type", "metadata_locked", "metadata_fetched", "date_added", "date_updated"}
+	"img_primary", "img_backdrop", "img_logo", "img_thumb", "media", "subtitles", "extra_type", "metadata_locked", "metadata_fetched", "date_added", "date_updated",
+	"album_id", "artist_id", "artists", "album_artist", "track_number", "disc_number", "taken_at", "width", "height", "disc_type"}
 
 var itemCols = ItemCols("")
 
@@ -139,7 +151,7 @@ func ItemCols(alias string) string {
 	parts := make([]string, len(itemColumns))
 	for i, c := range itemColumns {
 		switch c {
-		case "parent_id", "series_id", "season_id":
+		case "parent_id", "series_id", "season_id", "album_id", "artist_id":
 			parts[i] = "COALESCE(" + pre + c + ",'')"
 		default:
 			parts[i] = pre + c
@@ -154,11 +166,13 @@ type scanner interface{ Scan(dest ...any) error }
 func ScanItem(r scanner, extra ...any) (*Item, error) {
 	var it Item
 	var genres, studios, people, media, subs string
-	var sn, en, ee sql.NullInt64
+	var sn, en, ee, tn, dn sql.NullInt64
+	var artists string
 	dest := []any{&it.ID, &it.LibraryID, &it.Type, &it.ParentID, &it.SeriesID, &it.SeasonID, &it.Name, &it.OriginalTitle, &it.SortName,
 		&it.Path, &it.IsFolder, &it.Year, &it.Overview, &it.Tagline, &it.PremiereDate, &it.EndDate, &it.Status, &it.CommunityRating, &it.OfficialRating, &it.Duration,
 		&sn, &en, &ee, &it.Container, &it.Size, &it.MTime, &genres, &studios, &people, &it.TmdbID, &it.ImdbID,
-		&it.ImgPrimary, &it.ImgBackdrop, &it.ImgLogo, &it.ImgThumb, &media, &subs, &it.ExtraType, &it.MetadataLocked, &it.MetadataFetched, &it.DateAdded, &it.DateUpdated}
+		&it.ImgPrimary, &it.ImgBackdrop, &it.ImgLogo, &it.ImgThumb, &media, &subs, &it.ExtraType, &it.MetadataLocked, &it.MetadataFetched, &it.DateAdded, &it.DateUpdated,
+		&it.AlbumID, &it.ArtistID, &artists, &it.AlbumArtist, &tn, &dn, &it.TakenAt, &it.Width, &it.Height, &it.DiscType}
 	dest = append(dest, extra...)
 	if err := r.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -174,6 +188,8 @@ func ScanItem(r scanner, extra ...any) (*Item, error) {
 		return &v
 	}
 	it.SeasonNumber, it.EpisodeNumber, it.EpisodeEnd = toPtr(sn), toPtr(en), toPtr(ee)
+	it.TrackNumber, it.DiscNumber = toPtr(tn), toPtr(dn)
+	_ = json.Unmarshal([]byte(artists), &it.Artists)
 	_ = json.Unmarshal([]byte(genres), &it.Genres)
 	_ = json.Unmarshal([]byte(studios), &it.Studios)
 	_ = json.Unmarshal([]byte(people), &it.People)
@@ -240,13 +256,18 @@ func (d *DB) UpsertItem(it *Item) error {
 		genres=CASE WHEN items.metadata_locked=1 THEN items.genres ELSE excluded.genres END,
 		studios=excluded.studios, people=excluded.people, tmdb_id=excluded.tmdb_id, imdb_id=excluded.imdb_id,
 		img_primary=excluded.img_primary, img_backdrop=excluded.img_backdrop, img_logo=excluded.img_logo, img_thumb=excluded.img_thumb,
-		metadata_fetched=excluded.metadata_fetched, date_updated=excluded.date_updated`,
+		metadata_fetched=excluded.metadata_fetched, date_updated=excluded.date_updated,
+		album_id=excluded.album_id, artist_id=excluded.artist_id, artists=excluded.artists, album_artist=excluded.album_artist,
+		track_number=excluded.track_number, disc_number=excluded.disc_number, taken_at=excluded.taken_at,
+		width=excluded.width, height=excluded.height, disc_type=excluded.disc_type`,
 		it.ID, it.LibraryID, it.Type, nullStr(it.ParentID), nullStr(it.SeriesID), nullStr(it.SeasonID), it.Name, it.OriginalTitle, it.SortName,
 		it.Path, it.IsFolder, it.Year, it.Overview, it.Tagline, it.PremiereDate, it.EndDate, it.Status, it.CommunityRating, it.OfficialRating, it.Duration,
 		nullInt(it.SeasonNumber), nullInt(it.EpisodeNumber), nullInt(it.EpisodeEnd), it.Container, it.Size, it.MTime,
 		js(it.Genres), js(it.Studios), js(it.People), it.TmdbID, it.ImdbID,
 		it.ImgPrimary, it.ImgBackdrop, it.ImgLogo, it.ImgThumb, string(media), js(stored), it.ExtraType, it.MetadataLocked, it.MetadataFetched,
-		it.DateAdded, it.DateUpdated)
+		it.DateAdded, it.DateUpdated,
+		nullStr(it.AlbumID), nullStr(it.ArtistID), js(it.Artists), it.AlbumArtist, nullInt(it.TrackNumber), nullInt(it.DiscNumber),
+		it.TakenAt, it.Width, it.Height, it.DiscType)
 	return err
 }
 
@@ -339,12 +360,13 @@ type Library struct {
 	CreatedAt int64    `json:"createdAt"`
 	LastScan  int64    `json:"lastScan"`
 	ItemCount int      `json:"itemCount"`
+	Realtime  bool     `json:"realtime"`
 }
 
 // ListLibraries returns all libraries with item counts.
 func (d *DB) ListLibraries() ([]*Library, error) {
-	rows, err := d.Query(`SELECT l.id,l.name,l.type,l.paths,l.created_at,l.last_scan,
-		(SELECT COUNT(*) FROM items i WHERE i.library_id=l.id AND i.type IN ('Movie','Series') AND i.extra_type='')
+	rows, err := d.Query(`SELECT l.id,l.name,l.type,l.paths,l.created_at,l.last_scan,l.realtime,
+		(SELECT COUNT(*) FROM items i WHERE i.library_id=l.id AND i.type IN ('Movie','Series','MusicAlbum','PhotoAlbum','Book','AudioBook') AND i.extra_type='')
 		FROM libraries l ORDER BY l.created_at`)
 	if err != nil {
 		return nil, err
@@ -354,7 +376,7 @@ func (d *DB) ListLibraries() ([]*Library, error) {
 	for rows.Next() {
 		var l Library
 		var paths string
-		if err := rows.Scan(&l.ID, &l.Name, &l.Type, &paths, &l.CreatedAt, &l.LastScan, &l.ItemCount); err != nil {
+		if err := rows.Scan(&l.ID, &l.Name, &l.Type, &paths, &l.CreatedAt, &l.LastScan, &l.Realtime, &l.ItemCount); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(paths), &l.Paths)
@@ -379,9 +401,9 @@ func (d *DB) GetLibrary(id string) (*Library, error) {
 
 // SaveLibrary inserts or updates a library.
 func (d *DB) SaveLibrary(l *Library) error {
-	_, err := d.Exec(`INSERT INTO libraries(id,name,type,paths,created_at,last_scan) VALUES(?,?,?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, paths=excluded.paths, last_scan=excluded.last_scan`,
-		l.ID, l.Name, l.Type, js(l.Paths), l.CreatedAt, l.LastScan)
+	_, err := d.Exec(`INSERT INTO libraries(id,name,type,paths,created_at,last_scan,realtime) VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET name=excluded.name, type=excluded.type, paths=excluded.paths, last_scan=excluded.last_scan, realtime=excluded.realtime`,
+		l.ID, l.Name, l.Type, js(l.Paths), l.CreatedAt, l.LastScan, l.Realtime)
 	return err
 }
 

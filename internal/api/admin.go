@@ -16,9 +16,10 @@ import (
 )
 
 type libraryBody struct {
-	Name  string   `json:"name"`
-	Type  string   `json:"type"`
-	Paths []string `json:"paths"`
+	Name     string   `json:"name"`
+	Type     string   `json:"type"`
+	Paths    []string `json:"paths"`
+	Realtime *bool    `json:"realtime"`
 }
 
 func (b *libraryBody) validate() error {
@@ -58,10 +59,11 @@ func (s *Server) createLibrary(w http.ResponseWriter, r *http.Request) error {
 	if err := b.validate(); err != nil {
 		return err
 	}
-	l := &db.Library{ID: db.NewID(), Name: b.Name, Type: b.Type, Paths: b.Paths, CreatedAt: db.Now()}
+	l := &db.Library{ID: db.NewID(), Name: b.Name, Type: b.Type, Paths: b.Paths, CreatedAt: db.Now(), Realtime: b.Realtime == nil || *b.Realtime}
 	if err := s.DB.SaveLibrary(l); err != nil {
 		return err
 	}
+	s.librariesChanged()
 	_ = s.Scanner.ScanAll(context.Background(), l.ID)
 	return ok(w, l)
 }
@@ -80,9 +82,13 @@ func (s *Server) updateLibrary(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	l.Name, l.Paths = b.Name, b.Paths
+	if b.Realtime != nil {
+		l.Realtime = *b.Realtime
+	}
 	if err := s.DB.SaveLibrary(l); err != nil {
 		return err
 	}
+	s.librariesChanged()
 	_ = s.Scanner.ScanAll(context.Background(), l.ID)
 	return ok(w, l)
 }
@@ -95,6 +101,7 @@ func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) error {
 	if _, err := s.DB.Exec(`DELETE FROM libraries WHERE id=?`, id); err != nil {
 		return err
 	}
+	s.librariesChanged()
 	return ok(w, map[string]bool{"ok": true})
 }
 

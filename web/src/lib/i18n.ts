@@ -181,6 +181,8 @@ const it: Record<string, string> = {
   "Ended": "Conclusa",
   "Continuing": "In corso",
   "Chapters": "Capitoli",
+  "Realtime monitoring": "Monitoraggio in tempo reale",
+  "Detects new and removed files immediately (not available on network shares).": "Rileva subito i file aggiunti o rimossi (non funziona sulle cartelle di rete).",
 };
 
 const dicts: Record<string, Record<string, string>> = { it };

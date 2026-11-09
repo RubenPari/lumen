@@ -179,3 +179,13 @@ func IsTextSubtitleCodec(codec string) bool {
 	}
 	return false
 }
+
+// IsImageSubtitleCodec reports whether a subtitle codec is bitmap based and
+// therefore has to be burned into the video.
+func IsImageSubtitleCodec(codec string) bool {
+	switch codec {
+	case "hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvdsub", "dvb_subtitle", "xsub":
+		return true
+	}
+	return false
+}

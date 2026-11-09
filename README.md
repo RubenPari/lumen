@@ -48,7 +48,10 @@ Senza ffmpeg/ffprobe funziona solo la riproduzione diretta dei formati che il br
   **HLS** con ffmpeg (copia del video H.264 quando possibile, accelerazione hardware VA-API/QSV/NVENC/
   VideoToolbox, tone-mapping HDR→SDR, scelta qualità e traccia audio).
 - **Sottotitoli** SRT/ASS/SSA/VTT esterni e incorporati (testuali), convertiti in WebVTT e resi in
-  overlay con dimensione configurabile.
+  overlay con dimensione configurabile; sottotitoli a immagine **PGS/VobSub** impressi nel video durante la transcodifica.
+- **DVD e Blu-ray** in cartella (`VIDEO_TS`, `BDMV`), riprodotti tramite ffmpeg.
+- **Monitoraggio in tempo reale** delle cartelle (aggiunte/rimozioni rilevate in pochi secondi) e aggiornamento
+  istantaneo della web app via Server-Sent Events.
 - **Stato per utente**: posizione di ripresa, visto/non visto (anche per stagione o serie intera),
   preferiti, "Continua a guardare" e "Prossimi episodi" (stessa logica del `TVSeriesManager`).
 - **Utenti** multipli con password PBKDF2-SHA512 (come Jellyfin), ruoli admin, sessioni via cookie.
@@ -95,9 +98,9 @@ make test                                         # go vet + test + typecheck
 
 - L'API non è compatibile con i client Jellyfin ufficiali (app TV/mobile): c'è solo la web app.
 - Solo film e serie TV (niente musica, libri, foto, Live TV).
-- Dischi DVD/Blu-ray in cartella (`VIDEO_TS`, `BDMV`) non sono riproducibili.
-- I sottotitoli a immagine (PGS/VobSub) non vengono mostrati.
-- Le scansioni sono periodiche (configurabili) o manuali: non c'è un watcher del filesystem.
+- Le immagini disco `.iso` non sono supportate (le cartelle `VIDEO_TS`/`BDMV` sì).
+- Il monitoraggio in tempo reale usa inotify: su cartelle di rete (NFS/SMB) e su `/mnt/c` in WSL non riceve eventi,
+  lì restano le scansioni periodiche.
 
 ## Licenza
 

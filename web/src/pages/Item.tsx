@@ -16,6 +16,7 @@ function TechBadges({ item }: { item: Item }) {
   const v = streams.find((s) => s.type === "video");
   const a = streams.find((s) => s.type === "audio");
   const badges = [
+    item.discType === "bluray" ? "Blu-ray" : item.discType === "dvd" ? "DVD" : undefined,
     resolutionLabel(v?.width, v?.height),
     v?.hdr ? "HDR" : undefined,
     v?.codec?.toUpperCase().replace("HEVC", "HEVC"),

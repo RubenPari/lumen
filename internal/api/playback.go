@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rubenpari/lumen/internal/db"
+	"github.com/rubenpari/lumen/internal/events"
 	"github.com/rubenpari/lumen/internal/stream"
 )
 
@@ -51,6 +52,7 @@ func (s *Server) setPlayed(played bool) handler {
 				return err
 			}
 		}
+		s.Events.Publish(events.Event{Type: "userdata.changed", User: u.ID, Data: it.ID})
 		return ok2(s, w, r, it)
 	}
 }
@@ -124,6 +126,7 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) error {
 	}
 	if body.Event == "stop" {
 		s.playing.Delete(u.ID)
+		s.Events.Publish(events.Event{Type: "userdata.changed", User: u.ID, Data: it.ID})
 	} else {
 		np := &NowPlaying{UserID: u.ID, UserName: u.Name, ItemID: it.ID, ItemName: it.Name, Position: body.Position,
 			Duration: dur, Paused: body.Paused, Method: body.Method, Device: deviceName(r.UserAgent()), UpdatedAt: db.Now()}
@@ -176,7 +179,8 @@ type subtitleTrack struct {
 	External bool   `json:"external"`
 	Forced   bool   `json:"forced,omitempty"`
 	Default  bool   `json:"default,omitempty"`
-	URL      string `json:"url,omitempty"` // empty when not convertible (image subs)
+	URL      string `json:"url,omitempty"`    // empty when not convertible (image subs)
+	BurnIn   bool   `json:"burnIn,omitempty"` // image subtitle: must be burned in while transcoding
 }
 
 type audioTrack struct {
@@ -238,6 +242,8 @@ func subtitleTracks(it *db.Item) []subtitleTrack {
 		t := subtitleTrack{Index: i, Label: label, Language: st.Language, Codec: st.Codec, Forced: st.Forced, Default: st.Default}
 		if stream.IsTextSubtitleCodec(st.Codec) {
 			t.URL = fmt.Sprintf("/api/items/%s/subtitles/%d", it.ID, i)
+		} else if stream.IsImageSubtitleCodec(st.Codec) {
+			t.BurnIn = true
 		}
 		out = append(out, t)
 		i++
@@ -330,8 +336,8 @@ func (s *Server) directStream(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if it.IsFolder {
-		return errf(http.StatusBadRequest, "not playable")
+	if it.IsFolder || it.DiscType != "" {
+		return errf(http.StatusBadRequest, "not directly playable")
 	}
 	if ct := mime.TypeByExtension(filepath.Ext(it.Path)); ct != "" {
 		w.Header().Set("Content-Type", ct)
@@ -356,6 +362,7 @@ func (s *Server) startHLS(w http.ResponseWriter, r *http.Request) error {
 		MaxHeight  int     `json:"maxHeight"`
 		MaxBitrate int     `json:"maxBitrate"`
 		ForceVideo bool    `json:"forceVideo"`
+		BurnSub    *int    `json:"burnSubtitle"` // subtitle track index (as in playback info)
 	}
 	if err := decode(r, &body); err != nil {
 		return err
@@ -363,6 +370,19 @@ func (s *Server) startHLS(w http.ResponseWriter, r *http.Request) error {
 	opt := stream.Options{Start: body.Start, AudioStream: -1, MaxHeight: body.MaxHeight, MaxBitrate: body.MaxBitrate, ForceVideo: body.ForceVideo}
 	if body.Audio != nil {
 		opt.AudioStream = *body.Audio
+	}
+	opt.BurnSubtitle = -1
+	if body.BurnSub != nil {
+		n := 0
+		for _, st := range it.Media.Streams {
+			if st.Type != "subtitle" {
+				continue
+			}
+			if n == *body.BurnSub {
+				opt.BurnSubtitle = st.Index
+			}
+			n++
+		}
 	}
 	sess, err := s.Streams.Start(it, opt, userFrom(r).ID)
 	if err != nil {

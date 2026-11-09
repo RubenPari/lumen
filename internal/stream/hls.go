@@ -22,6 +22,9 @@ type Options struct {
 	MaxHeight   int     // 0 = original
 	MaxBitrate  int     // kbps, 0 = unlimited
 	ForceVideo  bool    // force video re-encode
+	// BurnSubtitle is the absolute index of an image subtitle stream (PGS,
+	// VobSub) to burn into the video; -1 disables it.
+	BurnSubtitle int
 }
 
 // Session is a running ffmpeg HLS job.
@@ -157,10 +160,15 @@ func (m *Manager) Start(it *db.Item, opt Options, owner string) (*Session, error
 	if opt.Start > 0 {
 		args = append(args, "-ss", strconv.FormatFloat(opt.Start, 'f', 3, 64))
 	}
+	burn := opt.BurnSubtitle >= 0 && video != nil
+	hw := m.HWAccel
+	if burn {
+		hw = "" // overlay runs on the CPU
+	}
 	needScale := video != nil && opt.MaxHeight > 0 && video.Height > opt.MaxHeight
-	copyVideo := video != nil && browserVideoOK(*video) && !needScale && opt.MaxBitrate == 0 && !opt.ForceVideo && !video.HDR
+	copyVideo := video != nil && browserVideoOK(*video) && !needScale && opt.MaxBitrate == 0 && !opt.ForceVideo && !video.HDR && !burn
 	if !copyVideo {
-		switch m.HWAccel {
+		switch hw {
 		case "vaapi":
 			args = append(args, "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi", "-vaapi_device", "/dev/dri/renderD128")
 		case "qsv":
@@ -169,8 +177,10 @@ func (m *Manager) Start(it *db.Item, opt Options, owner string) (*Session, error
 			args = append(args, "-hwaccel", "cuda")
 		}
 	}
-	args = append(args, "-i", it.Path)
-	if video != nil {
+	args = append(args, "-i", InputFor(it))
+	if burn {
+		// Mapped later, after building the filter graph.
+	} else if video != nil {
 		args = append(args, "-map", fmt.Sprintf("0:%d", video.Index))
 	} else {
 		args = append(args, "-map", "0:v:0?")
@@ -185,7 +195,7 @@ func (m *Manager) Start(it *db.Item, opt Options, owner string) (*Session, error
 	} else {
 		var filters []string
 		enc := []string{"-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-profile:v", "high", "-pix_fmt", "yuv420p"}
-		switch m.HWAccel {
+		switch hw {
 		case "vaapi":
 			enc = []string{"-c:v", "h264_vaapi"}
 		case "nvenc":
@@ -195,18 +205,24 @@ func (m *Manager) Start(it *db.Item, opt Options, owner string) (*Session, error
 		case "videotoolbox":
 			enc = []string{"-c:v", "h264_videotoolbox"}
 		}
-		if video != nil && video.HDR && m.HWAccel == "" {
+		if video != nil && video.HDR && hw == "" {
 			// Simple tone mapping to SDR (requires zscale in the ffmpeg build).
 			filters = append(filters, "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
 		}
 		if needScale {
-			if m.HWAccel == "vaapi" {
+			if hw == "vaapi" {
 				filters = append(filters, fmt.Sprintf("scale_vaapi=w=-2:h=%d", opt.MaxHeight))
 			} else {
 				filters = append(filters, fmt.Sprintf("scale=-2:%d", opt.MaxHeight))
 			}
 		}
-		if len(filters) > 0 {
+		if burn {
+			graph := fmt.Sprintf("[0:%d][0:%d]overlay=eof_action=pass:repeatlast=0", video.Index, opt.BurnSubtitle)
+			if len(filters) > 0 {
+				graph += "," + strings.Join(filters, ",")
+			}
+			args = append(args, "-filter_complex", graph+"[vout]", "-map", "[vout]")
+		} else if len(filters) > 0 {
 			args = append(args, "-vf", strings.Join(filters, ","))
 		}
 		args = append(args, enc...)

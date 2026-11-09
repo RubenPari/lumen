@@ -293,7 +293,7 @@ export function AdminLibraries() {
                   size="sm"
                   variant="ghost"
                   onClick={() => {
-                    setDraft({ name: l.name, type: l.type, paths: l.paths ?? [] });
+                    setDraft({ name: l.name, type: l.type, paths: l.paths ?? [], realtime: l.realtime });
                     setEditing(l);
                   }}
                 >

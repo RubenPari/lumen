@@ -69,6 +69,16 @@ export interface Item {
   media: { container?: string; bitRate?: number; streams?: Stream[]; probed: boolean; chapters?: { start: number; title: string }[] };
   subtitles?: { language?: string; format: string; forced?: boolean }[];
   metadataLocked?: boolean;
+  discType?: "dvd" | "bluray";
+  albumId?: string;
+  artistId?: string;
+  artists?: string[];
+  albumArtist?: string;
+  trackNumber?: number;
+  discNumber?: number;
+  takenAt?: number;
+  width?: number;
+  height?: number;
   dateAdded: number;
   images: Partial<Record<"primary" | "backdrop" | "logo" | "thumb", string>>;
   parentImages?: Partial<Record<"primary" | "backdrop" | "logo" | "thumb" | "seasonPrimary", string>>;
@@ -89,6 +99,7 @@ export interface Library {
   createdAt: number;
   lastScan: number;
   itemCount: number;
+  realtime: boolean;
   images: string[];
 }
 
@@ -124,6 +135,7 @@ export interface SubtitleTrack {
   forced?: boolean;
   default?: boolean;
   url?: string;
+  burnIn?: boolean;
 }
 
 export interface AudioTrack {

@@ -3,12 +3,15 @@ import { Film, FolderPlus, Trash2, Tv } from "lucide-react";
 import { useState } from "react";
 import { t } from "../lib/i18n";
 import { FolderPicker } from "./FolderPicker";
-import { Button, Input } from "./ui";
+import { Button, Input, Toggle } from "./ui";
+
+export type LibraryType = "movies" | "tvshows" | "music" | "photos" | "books";
 
 export interface LibraryDraft {
   name: string;
-  type: "movies" | "tvshows";
+  type: LibraryType;
   paths: string[];
+  realtime?: boolean;
 }
 
 export function LibraryForm({ value, onChange, lockType }: { value: LibraryDraft; onChange: (v: LibraryDraft) => void; lockType?: boolean }) {
@@ -60,6 +63,12 @@ export function LibraryForm({ value, onChange, lockType }: { value: LibraryDraft
           </Button>
         </div>
       </div>
+      <Toggle
+        checked={value.realtime ?? true}
+        onChange={(v) => onChange({ ...value, realtime: v })}
+        label={t("Realtime monitoring")}
+        description={t("Detects new and removed files immediately (not available on network shares).")}
+      />
       <FolderPicker
         open={picker}
         onClose={() => setPicker(false)}

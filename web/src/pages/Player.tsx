@@ -79,6 +79,7 @@ export function Player() {
   const [menu, setMenu] = useState<Menu>(null);
   const [error, setError] = useState<string | null>(null);
   const [subIndex, setSubIndex] = useState(-1);
+  const [burnSub, setBurnSub] = useState<number | undefined>(undefined);
   const [cues, setCues] = useState<Cue[]>([]);
   const [audioIndex, setAudioIndex] = useState<number | undefined>(undefined);
   const [quality, setQuality] = useState<QualityId>("original");
@@ -96,7 +97,7 @@ export function Player() {
 
   // ---- Source selection ----
   const startHls = useCallback(
-    async (start: number, opts: { audio?: number; quality?: QualityId } = {}) => {
+    async (start: number, opts: { audio?: number; quality?: QualityId; burn?: number | null } = {}) => {
       if (!info) return;
       const q = qualities.find((x) => x.id === (opts.quality ?? quality))!;
       setWaiting(true);
@@ -107,6 +108,7 @@ export function Player() {
           audio: opts.audio ?? audioIndex,
           maxHeight: q.maxHeight,
           maxBitrate: q.maxBitrate,
+          burnSubtitle: (opts.burn === undefined ? burnSub : opts.burn) ?? undefined,
         });
         const prev = sourceRef.current;
         if (prev?.sessionId && prev.sessionId !== res.sessionId) api.del(`/api/hls/${prev.sessionId}`).catch(() => {});
@@ -116,7 +118,7 @@ export function Player() {
         setWaiting(false);
       }
     },
-    [info, quality, audioIndex, sourceRef],
+    [info, quality, audioIndex, burnSub, sourceRef],
   );
 
   const initialStart = useMemo(() => {
@@ -420,14 +422,30 @@ export function Player() {
     setMenu(null);
     if (info?.canTranscode) startHls(timeRef.current, { audio: index });
   };
-  const changeQuality = (q: QualityId) => {
-    setQuality(q);
-    setMenu(null);
-    if (q === "original" && info && canDirectPlay(info).ok && audioIndex === undefined) {
+  /** Goes back to direct play when nothing requires transcoding anymore. */
+  const reconfigure = (q: QualityId, burn: number | null) => {
+    if (q === "original" && burn === null && info && canDirectPlay(info).ok && audioIndex === undefined) {
       const s = sourceRef.current;
       if (s?.sessionId) api.del(`/api/hls/${s.sessionId}`).catch(() => {});
       setSource({ mode: "direct", offset: 0, url: info.directUrl });
-    } else startHls(timeRef.current, { quality: q });
+    } else startHls(timeRef.current, { quality: q, burn });
+  };
+  const changeQuality = (q: QualityId) => {
+    setQuality(q);
+    setMenu(null);
+    reconfigure(q, burnSub ?? null);
+  };
+  const selectSubtitle = (index: number) => {
+    setMenu(null);
+    setSubIndex(index);
+    const track = info?.subtitles.find((s) => s.index === index);
+    if (track?.burnIn) {
+      setBurnSub(index);
+      startHls(timeRef.current, { burn: index });
+    } else if (burnSub !== undefined) {
+      setBurnSub(undefined);
+      reconfigure(quality, null);
+    }
   };
 
   if (infoError)
@@ -658,13 +676,18 @@ export function Player() {
             </CtrlButton>
             {menu === "subs" && info && (
               <MenuPanel title={t("Subtitles")}>
-                <MenuItem active={subIndex === -1} onClick={() => (setSubIndex(-1), setMenu(null))}>
+                <MenuItem active={subIndex === -1} onClick={() => selectSubtitle(-1)}>
                   {t("Off")}
                 </MenuItem>
                 {info.subtitles.map((s) => (
-                  <MenuItem key={s.index} active={subIndex === s.index} disabled={!s.url} onClick={() => (setSubIndex(s.index), setMenu(null))}>
+                  <MenuItem
+                    key={s.index}
+                    active={subIndex === s.index}
+                    disabled={!s.url && !(s.burnIn && info.canTranscode)}
+                    onClick={() => selectSubtitle(s.index)}
+                  >
                     {s.label}
-                    {!s.url && <span className="ml-1 text-ink-500">({s.codec})</span>}
+                    {s.burnIn && <span className="ml-1.5 rounded bg-white/10 px-1.5 py-px text-[10px] font-semibold text-ink-300 uppercase">{s.codec === "hdmv_pgs_subtitle" ? "PGS" : "VobSub"}</span>}
                   </MenuItem>
                 ))}
                 <div className="mt-1 flex gap-1 border-t border-white/10 px-2 pt-2">

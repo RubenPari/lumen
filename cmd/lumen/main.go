@@ -18,6 +18,7 @@ import (
 
 	"github.com/rubenpari/lumen/internal/api"
 	"github.com/rubenpari/lumen/internal/db"
+	"github.com/rubenpari/lumen/internal/events"
 	"github.com/rubenpari/lumen/internal/metadata"
 	"github.com/rubenpari/lumen/internal/scanner"
 	"github.com/rubenpari/lumen/internal/stream"
@@ -96,11 +97,20 @@ func main() {
 		DB: database, FFmpeg: ffmpeg, FFprobe: ffprobe, CacheDir: cacheDir, Log: log,
 		Streams: streams, Images: stream.NewImageCache(filepath.Join(cacheDir, "images")), Web: web.FS(),
 	}
-	srv.Scanner = &scanner.Scanner{DB: database, FFprobe: ffprobe, Log: log,
+	srv.Events = events.New()
+	srv.Scanner = &scanner.Scanner{DB: database, FFprobe: ffprobe, Log: log, Events: srv.Events,
 		TMDB: func() *metadata.TMDB { return srv.TMDB() }}
+	srv.Scanner.OnChange = func() { srv.Events.Publish(events.Event{Type: "library.changed"}) }
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if w, err := scanner.NewWatcher(ctx, srv.Scanner); err != nil {
+		log.Warn("realtime monitoring disabled", "err", err)
+	} else {
+		w.Sync()
+		srv.Watcher = w
+	}
 
 	// Periodic library scan.
 	go func() {

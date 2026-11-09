@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { isMac } from "../lib/format";
+import { useServerEvents } from "../lib/events";
 import { useHotkey, useLibraries, useMe, useScrolled } from "../lib/hooks";
 import { t } from "../lib/i18n";
 import { SearchPalette } from "./Search";
@@ -72,6 +73,7 @@ export function Layout() {
   const { data: libs } = useLibraries();
   const [searchOpen, setSearchOpen] = useState(false);
   const loc = useLocation();
+  useServerEvents();
   useHotkey("k", (e) => {
     e.preventDefault();
     setSearchOpen(true);
