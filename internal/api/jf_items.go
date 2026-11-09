@@ -63,45 +63,11 @@ type jfCtx struct {
 }
 
 func (s *Server) jfContext(r *http.Request, items []*db.Item, withSources bool) (*jfCtx, error) {
-	u := userFrom(r)
-	ids := make([]string, 0, len(items))
-	parentIDs := map[string]bool{}
-	var folders []string
-	for _, it := range items {
-		ids = append(ids, it.ID)
-		for _, p := range []string{it.SeriesID, it.SeasonID, it.AlbumID, it.ArtistID} {
-			if p != "" {
-				parentIDs[p] = true
-			}
-		}
-		if it.Type == db.TypeSeries || it.Type == db.TypeSeason {
-			folders = append(folders, it.ID)
-		}
-	}
-	ud, err := s.DB.GetUserData(u.ID, ids)
+	facts, err := s.loadItemFacts(userFrom(r).ID, items)
 	if err != nil {
 		return nil, err
 	}
-	c := &jfCtx{ud: ud, parents: map[string]*db.Item{}, sources: withSources, serverID: s.serverID()}
-	if len(parentIDs) > 0 {
-		var args []any
-		for id := range parentIDs {
-			args = append(args, id)
-		}
-		ps, err := s.DB.QueryItems(`WHERE id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+`)`, args...)
-		if err != nil {
-			return nil, err
-		}
-		for _, p := range ps {
-			c.parents[p.ID] = p
-		}
-	}
-	if len(folders) > 0 {
-		if c.counts, err = s.episodeCounts(u.ID, folders); err != nil {
-			return nil, err
-		}
-	}
-	return c, nil
+	return &jfCtx{ud: facts.UserData, parents: facts.Parents, counts: facts.Counts, sources: withSources, serverID: s.serverID()}, nil
 }
 
 func jfUserData(it *db.Item, d db.UserData, counts [2]int, hasCounts bool) map[string]any {
@@ -465,8 +431,7 @@ func inClause(col string, vals []string, args *[]any) string {
 
 func (s *Server) jfQueryItems(w http.ResponseWriter, r *http.Request) error {
 	u := userFrom(r)
-	where := []string{"i.extra_type=''"}
-	args := []any{u.ID}
+	f := listFilter{UserID: u.ID}
 	types := splitList(jfQuery(r, "IncludeItemTypes"))
 	for i, t := range types {
 		if strings.EqualFold(t, "Folder") {
@@ -479,18 +444,17 @@ func (s *Server) jfQueryItems(w http.ResponseWriter, r *http.Request) error {
 		for i := range ids {
 			ids[i] = normID(ids[i])
 		}
-		where = append(where, inClause("i.id", ids, &args))
+		f.IDs = ids
 	} else if parent != "" {
 		if lib, err := s.DB.GetLibrary(parent); err == nil {
-			where = append(where, "i.library_id=?")
-			args = append(args, lib.ID)
+			f.LibraryID = lib.ID
 			if len(types) == 0 {
 				if recursive {
 					types = []string{db.TypeMovie, db.TypeSeries, db.TypeMusicAlbum, db.TypeBook, db.TypeAudioBook, db.TypePhoto}
 				} else {
 					types = topLevelTypes[lib.Type]
 					if lib.Type == "photos" {
-						where = append(where, "i.parent_id IS NULL")
+						f.RootOnly = true
 					}
 				}
 			}
@@ -498,98 +462,88 @@ func (s *Server) jfQueryItems(w http.ResponseWriter, r *http.Request) error {
 			switch p.Type {
 			case db.TypeSeries:
 				if recursive || containsFold(types, db.TypeEpisode) {
-					where = append(where, "i.series_id=?")
+					f.SeriesIDs = append(f.SeriesIDs, p.ID)
 				} else {
-					where = append(where, "i.parent_id=?")
+					f.ParentID = p.ID
 				}
 			case db.TypeMusicAlbum:
-				where = append(where, "i.album_id=?")
+				f.AlbumID = p.ID
 			case db.TypeMusicArtist:
+				f.ArtistID = p.ID
 				if containsFold(types, db.TypeAudio) {
-					where = append(where, "i.artist_id=? AND i.type='Audio'")
+					f.ForceType = db.TypeAudio
 				} else {
-					where = append(where, "i.artist_id=? AND i.type='MusicAlbum'")
+					f.ForceType = db.TypeMusicAlbum
 				}
 			default:
-				where = append(where, "(i.parent_id=? OR i.season_id=?)")
-				args = append(args, p.ID)
+				f.ParentOrSeasonID = p.ID
 			}
-			args = append(args, p.ID)
 		} else {
 			return s.jfQueryResult(w, r, nil, 0, 0)
 		}
 	} else if len(types) == 0 {
 		types = []string{db.TypeMovie, db.TypeSeries}
 	}
-	if len(types) > 0 {
-		where = append(where, inClause("i.type", types, &args))
-	}
+	f.Types = types
 	if ex := splitList(jfQuery(r, "ExcludeItemTypes")); len(ex) > 0 {
-		where = append(where, "NOT "+inClause("i.type", ex, &args))
+		f.ExcludeTypes = ex
 	}
 	for _, key := range []string{"AlbumArtistIds", "ArtistIds", "ContributingArtistIds"} {
 		if v := splitList(jfQuery(r, key)); len(v) > 0 {
 			for i := range v {
 				v[i] = normID(v[i])
 			}
-			where = append(where, inClause("i.artist_id", v, &args))
+			f.ArtistIDGroups = append(f.ArtistIDGroups, v)
 		}
 	}
 	if v := splitList(jfQuery(r, "AlbumIds")); len(v) > 0 {
 		for i := range v {
 			v[i] = normID(v[i])
 		}
-		where = append(where, inClause("i.album_id", v, &args))
+		f.AlbumIDs = v
 	}
 	if v := jfQuery(r, "SeriesId"); v != "" {
-		where = append(where, "i.series_id=?")
-		args = append(args, normID(v))
+		f.SeriesIDs = append(f.SeriesIDs, normID(v))
 	}
 	if g := splitList(jfQuery(r, "Genres")); len(g) > 0 {
-		where = append(where, "EXISTS (SELECT 1 FROM json_each(i.genres) WHERE "+inClause("value", g, &args)+")")
+		f.Genres = g
 	}
 	if v := splitList(jfQuery(r, "Years")); len(v) > 0 {
-		where = append(where, inClause("i.year", v, &args))
+		f.Years = v
 	}
 	if v := jfQuery(r, "SearchTerm"); v != "" {
-		where = append(where, "(i.name LIKE ? OR i.original_title LIKE ?)")
-		args = append(args, "%"+v+"%", "%"+v+"%")
+		f.Search = v
 	}
 	if v := jfQuery(r, "NameStartsWith"); v != "" {
-		where = append(where, "i.sort_name LIKE ?")
-		args = append(args, v+"%")
+		f.NameStartsWith = v
 	}
 	if v := jfQuery(r, "NameLessThan"); v != "" {
-		where = append(where, "i.sort_name < ?")
-		args = append(args, v)
+		f.NameLessThan = v
 	}
 	filters := strings.ToLower(jfQuery(r, "Filters"))
 	if strings.Contains(filters, "isfavorite") || strings.EqualFold(jfQuery(r, "IsFavorite"), "true") {
-		where = append(where, "ud.favorite=1")
+		f.Favorite = true
 	}
 	if strings.Contains(filters, "isresumable") {
-		where = append(where, "ud.position>0 AND ud.played=0")
+		f.Resumable = true
 	}
 	if strings.Contains(filters, "isunplayed") || strings.EqualFold(jfQuery(r, "IsPlayed"), "false") {
-		where = append(where, "COALESCE(ud.played,0)=0")
+		f.SimpleUnplayed = true
 	} else if strings.Contains(filters, "isplayed") || strings.EqualFold(jfQuery(r, "IsPlayed"), "true") {
-		where = append(where, "ud.played=1")
+		f.RequirePlayed = true
 	}
 	if strings.Contains(filters, "isnotfolder") {
-		where = append(where, "i.is_folder=0")
+		f.NotFolder = true
 	}
-	order := jfOrder(r)
 	start, _ := strconv.Atoi(jfQuery(r, "StartIndex"))
 	limit, err := strconv.Atoi(jfQuery(r, "Limit"))
 	if err != nil || limit <= 0 || limit > 2000 {
 		limit = 2000
 	}
-	from := ` FROM items i LEFT JOIN user_data ud ON ud.item_id=i.id AND ud.user_id=? WHERE ` + strings.Join(where, " AND ")
-	var total int
-	if err := s.DB.QueryRow(`SELECT COUNT(*)`+from, args...).Scan(&total); err != nil {
-		return err
-	}
-	items, err := s.queryItemsSQL(`SELECT `+db.ItemCols("i")+from+` ORDER BY `+order+fmt.Sprintf(" LIMIT %d OFFSET %d", limit, start), args...)
+	f.Order = jfOrder(r)
+	f.Limit = limit
+	f.Offset = start
+	items, total, err := s.pageItems(f)
 	if err != nil {
 		return err
 	}
@@ -632,23 +586,6 @@ func jfOrder(r *http.Request) string {
 	}
 	parts = append(parts, "COALESCE(i.season_number, i.disc_number, 0)", "COALESCE(i.episode_number, i.track_number, 0)", "i.sort_name COLLATE NOCASE")
 	return strings.Join(parts, ", ")
-}
-
-func (s *Server) queryItemsSQL(query string, args ...any) ([]*db.Item, error) {
-	rows, err := s.DB.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*db.Item
-	for rows.Next() {
-		it, err := db.ScanItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
 }
 
 func (s *Server) jfGetItem(w http.ResponseWriter, r *http.Request) error {
@@ -860,6 +797,9 @@ func (s *Server) jfGenres(w http.ResponseWriter, r *http.Request) error {
 		var g string
 		_ = rows.Scan(&g)
 		out = append(out, map[string]any{"Name": g, "Id": db.StableID("genre", g), "Type": "Genre", "ServerId": s.serverID(), "ImageTags": map[string]string{}, "BackdropImageTags": []string{}})
+	}
+	if err := rows.Err(); err != nil {
+		return err
 	}
 	return jfJSON(w, map[string]any{"Items": out, "TotalRecordCount": len(out), "StartIndex": 0})
 }

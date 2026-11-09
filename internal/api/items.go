@@ -47,17 +47,12 @@ func imagesOf(it *db.Item) map[string]string {
 // dto converts items into DTOs, attaching user data and aggregated counts.
 func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 	u := userFrom(r)
-	ids := make([]string, len(items))
-	for i, it := range items {
-		ids[i] = it.ID
-	}
-	ud, err := s.DB.GetUserData(u.ID, ids)
+	facts, err := s.loadItemFacts(u.ID, items)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]*ItemDTO, len(items))
-	var folderIDs []string
-	parentIDs := map[string]bool{}
+	seriesLike := false
 	for i, it := range items {
 		if !u.IsAdmin {
 			it.Path = ""
@@ -65,10 +60,10 @@ func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 		if it.Type == db.TypeBook && it.Duration == 0 {
 			it.Duration = 100 // book progress is stored as a percentage
 		}
-		out[i] = &ItemDTO{Item: it, Images: imagesOf(it), UserData: ud[it.ID]}
+		out[i] = &ItemDTO{Item: it, Images: imagesOf(it), UserData: facts.UserData[it.ID]}
 		switch it.Type {
 		case db.TypeSeries, db.TypeSeason:
-			folderIDs = append(folderIDs, it.ID)
+			seriesLike = true
 		case db.TypeMusicAlbum, db.TypeAudioBook:
 			_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE parent_id=? AND type='Audio'`, it.ID).Scan(&out[i].ChildCount)
 		case db.TypeMusicArtist:
@@ -76,20 +71,10 @@ func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 		case db.TypePhotoAlbum:
 			_ = s.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE parent_id=? AND type='Photo'`, it.ID).Scan(&out[i].ChildCount)
 		}
-		if it.SeriesID != "" {
-			parentIDs[it.SeriesID] = true
-		}
-		if it.SeasonID != "" {
-			parentIDs[it.SeasonID] = true
-		}
 	}
-	if len(folderIDs) > 0 {
-		counts, err := s.episodeCounts(u.ID, folderIDs)
-		if err != nil {
-			return nil, err
-		}
+	if seriesLike {
 		for _, d := range out {
-			if c, ok := counts[d.ID]; ok {
+			if c, ok := facts.Counts[d.ID]; ok {
 				d.EpisodeCount, d.UnplayedCount = c[0], c[0]-c[1]
 				d.UserData.Played = c[0] > 0 && c[1] == c[0]
 			}
@@ -98,69 +83,20 @@ func (s *Server) dto(r *http.Request, items []*db.Item) ([]*ItemDTO, error) {
 			}
 		}
 	}
-	if len(parentIDs) > 0 {
-		var pids []any
-		var ph []string
-		for id := range parentIDs {
-			pids = append(pids, id)
-			ph = append(ph, "?")
+	for _, d := range out {
+		if p := facts.Parents[d.SeriesID]; p != nil {
+			d.SeriesName = p.Name
+			d.ParentImages = imagesOf(p)
 		}
-		parents, err := s.DB.QueryItems(`WHERE id IN (`+strings.Join(ph, ",")+`)`, pids...)
-		if err != nil {
-			return nil, err
-		}
-		byID := map[string]*db.Item{}
-		for _, p := range parents {
-			byID[p.ID] = p
-		}
-		for _, d := range out {
-			if p := byID[d.SeriesID]; p != nil {
-				d.SeriesName = p.Name
-				d.ParentImages = imagesOf(p)
-			}
-			if p := byID[d.SeasonID]; p != nil {
-				d.SeasonName = p.Name
-				if t := imgTag(p.ImgPrimary); t != "" {
-					if d.ParentImages == nil {
-						d.ParentImages = map[string]string{}
-					}
-					d.ParentImages["seasonPrimary"] = t
+		if p := facts.Parents[d.SeasonID]; p != nil {
+			d.SeasonName = p.Name
+			if t := imgTag(p.ImgPrimary); t != "" {
+				if d.ParentImages == nil {
+					d.ParentImages = map[string]string{}
 				}
+				d.ParentImages["seasonPrimary"] = t
 			}
 		}
-	}
-	return out, nil
-}
-
-// episodeCounts returns [total, played] episode counts for series/season ids.
-func (s *Server) episodeCounts(userID string, ids []string) (map[string][2]int, error) {
-	out := map[string][2]int{}
-	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := []any{userID}
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	args2 := append([]any{userID}, args[1:]...)
-	for _, q := range []struct {
-		col  string
-		args []any
-	}{{"series_id", args}, {"season_id", args2}} {
-		rows, err := s.DB.Query(`SELECT i.`+q.col+`, COUNT(*), COALESCE(SUM(CASE WHEN ud.played=1 THEN 1 ELSE 0 END),0)
-			FROM items i LEFT JOIN user_data ud ON ud.item_id=i.id AND ud.user_id=?
-			WHERE i.type='Episode' AND i.`+q.col+` IN (`+ph+`) GROUP BY i.`+q.col, q.args...)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var id string
-			var total, played int
-			if err := rows.Scan(&id, &total, &played); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			out[id] = [2]int{total, played}
-		}
-		rows.Close()
 	}
 	return out, nil
 }
@@ -198,6 +134,10 @@ func (s *Server) listLibraries(w http.ResponseWriter, r *http.Request) error {
 				_ = rows.Scan(&id)
 				ids = append(ids, id)
 			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return err
+			}
 			rows.Close()
 		}
 		out = append(out, libDTO{l, ids})
@@ -224,77 +164,67 @@ var sortColumns = map[string]string{
 func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
 	q := r.URL.Query()
 	u := userFrom(r)
-	where := []string{"i.extra_type=''"}
-	args := []any{u.ID}
+	f := listFilter{UserID: u.ID}
 	if v := q.Get("libraryId"); v != "" {
-		where = append(where, "i.library_id=?")
-		args = append(args, v)
+		f.LibraryID = v
 	}
 	if v := q.Get("type"); v != "" {
-		types := strings.Split(v, ",")
-		where = append(where, "i.type IN ("+strings.TrimSuffix(strings.Repeat("?,", len(types)), ",")+")")
-		for _, t := range types {
-			args = append(args, t)
-		}
+		f.Types = strings.Split(v, ",")
 	} else {
-		where = append(where, "i.type IN ('Movie','Series')")
+		f.Types = []string{db.TypeMovie, db.TypeSeries}
 	}
-	for key, col := range map[string]string{"parentId": "i.parent_id", "seriesId": "i.series_id", "seasonId": "i.season_id", "albumId": "i.album_id", "artistId": "i.artist_id"} {
-		if v := q.Get(key); v != "" {
-			where = append(where, col+"=?")
-			args = append(args, v)
-		}
+	if v := q.Get("parentId"); v != "" {
+		f.ParentID = v
+	}
+	if v := q.Get("seriesId"); v != "" {
+		f.SeriesIDs = append(f.SeriesIDs, v)
+	}
+	if v := q.Get("seasonId"); v != "" {
+		f.SeasonID = v
+	}
+	if v := q.Get("albumId"); v != "" {
+		f.AlbumID = v
+	}
+	if v := q.Get("artistId"); v != "" {
+		f.ArtistID = v
 	}
 	if v := q.Get("genre"); v != "" {
-		where = append(where, "EXISTS (SELECT 1 FROM json_each(i.genres) WHERE value=?)")
-		args = append(args, v)
+		f.Genres = []string{v}
 	}
 	if v := q.Get("studio"); v != "" {
-		where = append(where, "EXISTS (SELECT 1 FROM json_each(i.studios) WHERE value=?)")
-		args = append(args, v)
+		f.Studio = v
 	}
 	if v := q.Get("person"); v != "" {
-		where = append(where, "EXISTS (SELECT 1 FROM json_each(i.people) WHERE json_extract(value,'$.name')=?)")
-		args = append(args, v)
+		f.Person = v
 	}
 	if v := q.Get("bookSeries"); v != "" {
-		where = append(where, "i.album_artist=?")
-		args = append(args, v)
+		f.BookSeries = v
 	}
 	if v := qint(r, "year", 0); v > 0 {
-		where = append(where, "i.year=?")
-		args = append(args, v)
+		f.Year = v
 	}
 	if v := q.Get("decade"); v != "" {
 		var d int
 		if _, err := fmt.Sscanf(v, "%d", &d); err == nil {
-			where = append(where, "i.year>=? AND i.year<?")
-			args = append(args, d, d+10)
+			f.HasDecade = true
+			f.Decade = d
 		}
 	}
 	if v := strings.TrimSpace(q.Get("search")); v != "" {
-		where = append(where, "(i.name LIKE ? OR i.original_title LIKE ?)")
-		args = append(args, "%"+v+"%", "%"+v+"%")
+		f.Search = v
 	}
 	if v := q.Get("letter"); v != "" {
-		if v == "#" {
-			where = append(where, "substr(i.sort_name,1,1) NOT GLOB '[A-Za-z]'")
-		} else {
-			where = append(where, "upper(substr(i.sort_name,1,1))=?")
-			args = append(args, strings.ToUpper(v[:1]))
-		}
+		f.Letter = v
 	}
 	switch q.Get("filter") {
 	case "favorites":
-		where = append(where, "ud.favorite=1")
+		f.Favorite = true
 	case "unplayed":
-		where = append(where, `(CASE WHEN i.type='Series' THEN EXISTS (SELECT 1 FROM items e LEFT JOIN user_data eu ON eu.item_id=e.id AND eu.user_id=?
-			WHERE e.series_id=i.id AND e.type='Episode' AND COALESCE(eu.played,0)=0) ELSE COALESCE(ud.played,0)=0 END)`)
-		args = append(args, u.ID)
+		f.SeriesAwareUnplayed = true
 	case "played":
-		where = append(where, "ud.played=1")
+		f.RequirePlayed = true
 	case "resumable":
-		where = append(where, "ud.position>0 AND ud.played=0")
+		f.Resumable = true
 	}
 	order := sortColumns[q.Get("sort")]
 	if order == "" {
@@ -304,8 +234,8 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
 	if strings.EqualFold(q.Get("order"), "desc") {
 		dir = "DESC"
 	}
-	if v := q.Get("root"); v == "true" {
-		where = append(where, "i.parent_id IS NULL")
+	if q.Get("root") == "true" {
+		f.RootOnly = true
 	}
 	if q.Get("sort") != "random" && q.Get("sort") != "episode" && q.Get("sort") != "track" {
 		order = order + " " + dir + ", i.sort_name COLLATE NOCASE"
@@ -314,26 +244,13 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) error {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	offset := qint(r, "offset", 0)
-	from := ` FROM items i LEFT JOIN user_data ud ON ud.item_id=i.id AND ud.user_id=? WHERE ` + strings.Join(where, " AND ")
-	var total int
-	if err := s.DB.QueryRow(`SELECT COUNT(*)`+from, args...).Scan(&total); err != nil {
-		return err
-	}
-	rows, err := s.DB.Query(`SELECT `+db.ItemCols("i")+from+` ORDER BY `+order+fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset), args...)
+	f.Order = order
+	f.Limit = limit
+	f.Offset = qint(r, "offset", 0)
+	items, total, err := s.pageItems(f)
 	if err != nil {
 		return err
 	}
-	var items []*db.Item
-	for rows.Next() {
-		it, err := db.ScanItem(rows)
-		if err != nil {
-			rows.Close()
-			return err
-		}
-		items = append(items, it)
-	}
-	rows.Close()
 	d, err := s.dto(r, items)
 	if err != nil {
 		return err
@@ -528,6 +445,9 @@ func (s *Server) genres(w http.ResponseWriter, r *http.Request) error {
 		}
 		out = append(out, g)
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	return ok(w, out)
 }
 
@@ -568,7 +488,11 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) error {
 				people = append(people, p)
 			}
 		}
+		err = rows.Err()
 		rows.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return ok(w, map[string]any{"items": d, "people": people})
 }
